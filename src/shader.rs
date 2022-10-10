@@ -2,7 +2,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 use erupt::{utils, vk, DeviceLoader};
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 use thiserror::Error as Err;
 
 use crate::logging::debug;

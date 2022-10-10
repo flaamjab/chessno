@@ -7,11 +7,17 @@ edition = "2021"
 winit = "0.27"
 env_logger = "0.9"
 log = "0.4"
-pollster = "0.2"
 cgmath = "0.18.0"
 bytemuck = { version = "1.4", features = ["derive"] }
 rand = "0.8.5"
 image = { version =  "0.24", features = ["png"] }
-erupt = "0.22.0+204"
+erupt = "0.22.0"
 thiserror = "1.0"
 smallvec = "1.10"
+memoffset = "0.6.5"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-glue = {  version = "0.7.0", features = ["logger"] }

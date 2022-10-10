@@ -11,29 +11,30 @@ use crate::validation;
 const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
 
 pub struct Context {
-    queues: Queues,
-    device: Arc<DeviceLoader>,
-    physical_device: PhysicalDevice,
-    instance: Arc<InstanceLoader>,
-    entry: Arc<EntryLoader>,
+    pub queues: Queues,
+    pub surface: vk::SurfaceKHR,
+    pub device: Arc<DeviceLoader>,
+    pub physical_device: PhysicalDevice,
+    pub instance: Arc<InstanceLoader>,
+    pub entry: Arc<EntryLoader>,
 }
 
 #[derive(Clone)]
-struct PhysicalDevice {
-    handle: vk::PhysicalDevice,
-    queue_families: QueueFamilies,
-    surface_format: vk::SurfaceFormatKHR,
-    present_mode: vk::PresentModeKHR,
-    properties: vk::PhysicalDeviceProperties,
+pub struct PhysicalDevice {
+    pub handle: vk::PhysicalDevice,
+    pub queue_families: QueueFamilies,
+    pub surface_format: vk::SurfaceFormatKHR,
+    pub present_mode: vk::PresentModeKHR,
+    pub properties: vk::PhysicalDeviceProperties,
 }
 
 #[derive(Clone)]
-struct QueueFamilies {
-    graphics: u32,
+pub struct QueueFamilies {
+    pub graphics: u32,
 }
 
-struct Queues {
-    graphics: vk::Queue,
+pub struct Queues {
+    pub graphics: vk::Queue,
 }
 
 impl Context {
@@ -50,7 +51,7 @@ impl Context {
             .expect("failed to get required surface extensions");
 
         let mut layers = Vec::new();
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
         {
             instance_extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION_NAME);
             layers.push(LAYER_KHRONOS_VALIDATION);
@@ -60,7 +61,7 @@ impl Context {
         let surface =
             surface::create_surface(&instance, &window, None).expect("failed to create a surface");
 
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, not(target_os = "android")))]
         validation::init(&instance);
 
         let device_extensions = [vk::KHR_SWAPCHAIN_EXTENSION_NAME];
@@ -81,6 +82,7 @@ impl Context {
 
         Self {
             queues,
+            surface,
             device,
             physical_device,
             instance,
@@ -93,8 +95,11 @@ impl Drop for Context {
     fn drop(&mut self) {
         debug!("Dropping Vulkan context");
         unsafe {
-            #[cfg(debug_assertions)]
-            validation::deinit(&self.instance)
+            #[cfg(all(debug_assertions, not(target_os = "android")))]
+            validation::deinit(&self.instance);
+
+            self.device.destroy_device(None);
+            self.instance.destroy_instance(None);
         }
     }
 }
@@ -120,7 +125,7 @@ unsafe fn new_instance(
         .enabled_extension_names(&required_extensions)
         .enabled_layer_names(&required_layers);
 
-    Arc::new(InstanceLoader::new(&entry, &instance_info).expect("Failed to create instance"))
+    Arc::new(InstanceLoader::new(&entry, &instance_info).expect("failed to create instance"))
 }
 
 unsafe fn select_physical_device(
