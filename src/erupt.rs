@@ -3,11 +3,7 @@ use std::time::Instant;
 use std::{ffi::c_void, sync::Arc};
 
 use cgmath::{Deg, Matrix4};
-use erupt::{
-    vk,
-    vk1_0::{CommandBufferResetFlags, Extent2D},
-    DeviceLoader,
-};
+use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 use memoffset::offset_of;
 use winit::dpi::PhysicalSize;
 use winit::{
@@ -24,10 +20,10 @@ use crate::logging::info;
 use crate::shader::Shader;
 use crate::sync_pool::SyncPool;
 use crate::transform::Transform;
-use crate::validation;
 
 const TITLE: &str = "Isochess";
 const FRAMES_IN_FLIGHT: usize = 2;
+
 const SHADER_VERT: &[u8] = include_bytes!("../shaders/unlit.vert.spv");
 const SHADER_FRAG: &[u8] = include_bytes!("../shaders/unlit.frag.spv");
 
@@ -78,17 +74,8 @@ pub unsafe fn init() {
         .build(&event_loop)
         .unwrap();
 
-    let ctx = Context::new(&window, "Main", "No Engine");
+    let mut ctx = Context::new(&window, "Main", "No Engine");
 
-    let (swapchain, swapchain_image_extent) = create_swapchain(
-        &ctx,
-        ctx.surface,
-        window.inner_size(),
-        ctx.physical_device.surface_format,
-        ctx.physical_device.present_mode,
-    );
-
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Graphics_pipeline_basics/Shader_modules
     let shader = Shader::new(
         &ctx.device,
         &[
@@ -100,15 +87,6 @@ pub unsafe fn init() {
     let shader_stages = shader.stage_infos();
 
     let render_pass = create_render_pass(&ctx);
-
-    let image_views =
-        create_image_views(&ctx.device, swapchain, ctx.physical_device.surface_format);
-    let framebuffers = create_framebuffers(
-        &ctx.device,
-        &image_views,
-        render_pass,
-        &swapchain_image_extent,
-    );
 
     let uniforms = create_uniform_buffers(&ctx);
     let descriptor_pool = create_descriptor_pool(&ctx.device);
@@ -123,22 +101,10 @@ pub unsafe fn init() {
         &uniforms,
     );
 
-    let (pipeline, pipeline_layout) = create_pipeline(
-        &ctx,
-        &swapchain_image_extent,
-        &shader_stages,
-        render_pass,
-        &descriptor_set_layouts,
-    );
+    let (pipeline, pipeline_layout) =
+        create_pipeline(&ctx, &shader_stages, render_pass, &descriptor_set_layouts);
 
     drop(shader_stages);
-
-    let mut swapchain_state = SwapchainState {
-        swapchain,
-        image_views,
-        framebuffers,
-        image_extent: swapchain_image_extent,
-    };
 
     let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
         &ctx,
@@ -163,10 +129,11 @@ pub unsafe fn init() {
         .create_command_pool(&command_pool_info, None)
         .unwrap();
 
+    let framebuffers = ctx.swapchain.framebuffers(&ctx.device, render_pass);
     let cmd_buf_allocate_info = vk::CommandBufferAllocateInfoBuilder::new()
         .command_pool(command_pool)
         .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(swapchain_state.framebuffers.len() as _);
+        .command_buffer_count(framebuffers.len() as _);
     let cmd_bufs = ctx
         .device
         .allocate_command_buffers(&cmd_buf_allocate_info)
@@ -233,8 +200,7 @@ pub unsafe fn init() {
             transform = transform.with_model(Matrix4::from_angle_z(Deg(angle)));
 
             draw(
-                &ctx,
-                &mut swapchain_state,
+                &mut ctx,
                 &in_flight_fences,
                 &image_available_semaphores,
                 &render_finished_semaphores,
@@ -242,9 +208,7 @@ pub unsafe fn init() {
                 &cmd_bufs,
                 &mut framebuffer_resized,
                 window.inner_size(),
-                ctx.surface,
                 render_pass,
-                ctx.queues.graphics,
                 &geometry,
                 pipeline,
                 pipeline_layout,
@@ -259,7 +223,7 @@ pub unsafe fn init() {
         }
         Event::LoopDestroyed => {
             release_resources(
-                &ctx,
+                &mut ctx,
                 &uniforms,
                 vertex_buffer,
                 vertex_buffer_memory,
@@ -272,171 +236,12 @@ pub unsafe fn init() {
                 pipeline,
                 pipeline_layout,
                 descriptor_set_layout,
-                &swapchain_state,
                 render_pass,
-                ctx.surface,
             );
             info!("Exited cleanly");
         }
         _ => (),
     })
-}
-
-unsafe fn cleanup_swapchain(device: &Arc<DeviceLoader>, state: &SwapchainState) {
-    for fb in &state.framebuffers {
-        device.destroy_framebuffer(*fb, None);
-    }
-
-    for iv in &state.image_views {
-        device.destroy_image_view(*iv, None);
-    }
-
-    device.destroy_swapchain_khr(state.swapchain, None);
-}
-
-struct SwapchainState {
-    swapchain: vk::SwapchainKHR,
-    framebuffers: Vec<vk::Framebuffer>,
-    image_views: Vec<vk::ImageView>,
-    image_extent: Extent2D,
-}
-
-unsafe fn recreate_swapchain(
-    ctx: &Context,
-    state: &SwapchainState,
-    surface: vk::SurfaceKHR,
-    draw_area_size: PhysicalSize<u32>,
-    format: vk::SurfaceFormatKHR,
-    present_mode: vk::PresentModeKHR,
-    render_pass: vk::RenderPass,
-) -> SwapchainState {
-    ctx.device.device_wait_idle().unwrap();
-
-    cleanup_swapchain(&ctx.device, &state);
-
-    let (swapchain, surface_extent) =
-        create_swapchain(ctx, surface, draw_area_size, format, present_mode);
-    let image_views = create_image_views(&ctx.device, swapchain, format);
-    let framebuffers = create_framebuffers(&ctx.device, &image_views, render_pass, &surface_extent);
-
-    let new_state = SwapchainState {
-        swapchain,
-        framebuffers,
-        image_views,
-        image_extent: surface_extent,
-    };
-
-    new_state
-}
-
-unsafe fn create_swapchain(
-    ctx: &Context,
-    surface: vk::SurfaceKHR,
-    surface_size: PhysicalSize<u32>,
-    format: vk::SurfaceFormatKHR,
-    present_mode: vk::PresentModeKHR,
-) -> (vk::SwapchainKHR, vk::Extent2D) {
-    let surface_caps = ctx
-        .instance
-        .get_physical_device_surface_capabilities_khr(ctx.physical_device.handle, surface)
-        .unwrap();
-    let mut image_count = surface_caps.min_image_count + 1;
-    if surface_caps.max_image_count > 0 && image_count > surface_caps.max_image_count {
-        image_count = surface_caps.max_image_count;
-    }
-
-    // https://www.khronos.org/registry/vulkan/specs/1.2-extensions/man/html/VkSurfaceCapabilitiesKHR.html#_description
-    let swapchain_image_extent = match surface_caps.current_extent {
-        vk::Extent2D {
-            width: u32::MAX,
-            height: u32::MAX,
-        } => {
-            let PhysicalSize { width, height } = surface_size;
-            vk::Extent2D { width, height }
-        }
-        normal => normal,
-    };
-
-    let swapchain_info = vk::SwapchainCreateInfoKHRBuilder::new()
-        .surface(surface)
-        .min_image_count(image_count)
-        .image_format(format.format)
-        .image_color_space(format.color_space)
-        .image_extent(swapchain_image_extent)
-        .image_array_layers(1)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(surface_caps.current_transform)
-        .composite_alpha(vk::CompositeAlphaFlagBitsKHR::OPAQUE_KHR)
-        .present_mode(present_mode)
-        .clipped(true)
-        .old_swapchain(vk::SwapchainKHR::null());
-
-    let swapchain = ctx
-        .device
-        .create_swapchain_khr(&swapchain_info, None)
-        .unwrap();
-
-    (swapchain, swapchain_image_extent)
-}
-
-unsafe fn create_image_views(
-    device: &Arc<DeviceLoader>,
-    swapchain: vk::SwapchainKHR,
-    format: vk::SurfaceFormatKHR,
-) -> Vec<vk::ImageView> {
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Swap_chain
-    let swapchain_images = device.get_swapchain_images_khr(swapchain, None).unwrap();
-
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Image_views
-    swapchain_images
-        .iter()
-        .map(|swapchain_image| {
-            let image_view_info = vk::ImageViewCreateInfoBuilder::new()
-                .image(*swapchain_image)
-                .view_type(vk::ImageViewType::_2D)
-                .format(format.format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::IDENTITY,
-                    g: vk::ComponentSwizzle::IDENTITY,
-                    b: vk::ComponentSwizzle::IDENTITY,
-                    a: vk::ComponentSwizzle::IDENTITY,
-                })
-                .subresource_range(
-                    vk::ImageSubresourceRangeBuilder::new()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .base_mip_level(0)
-                        .level_count(1)
-                        .base_array_layer(0)
-                        .layer_count(1)
-                        .build(),
-                );
-            device.create_image_view(&image_view_info, None).unwrap()
-        })
-        .collect()
-}
-
-unsafe fn create_framebuffers(
-    device: &Arc<DeviceLoader>,
-    image_views: &[vk::ImageView],
-    render_pass: vk::RenderPass,
-    extent: &vk::Extent2D,
-) -> Vec<vk::Framebuffer> {
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Framebuffers
-    image_views
-        .iter()
-        .map(|image_view| {
-            let attachments = vec![*image_view];
-            let framebuffer_info = vk::FramebufferCreateInfoBuilder::new()
-                .render_pass(render_pass)
-                .attachments(&attachments)
-                .width(extent.width)
-                .height(extent.height)
-                .layers(1);
-
-            device.create_framebuffer(&framebuffer_info, None).unwrap()
-        })
-        .collect()
 }
 
 unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
@@ -457,6 +262,7 @@ unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
     let subpasses = vec![vk::SubpassDescriptionBuilder::new()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&color_attachment_refs)];
+
     let dependencies = vec![vk::SubpassDependencyBuilder::new()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
@@ -477,7 +283,6 @@ unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
 
 unsafe fn create_pipeline(
     ctx: &Context,
-    swapchain_image_extent: &vk::Extent2D,
     shader_stages: &[vk::PipelineShaderStageCreateInfoBuilder],
     render_pass: vk::RenderPass,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
@@ -493,15 +298,16 @@ unsafe fn create_pipeline(
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
+    let image_extent = ctx.swapchain.image_extent();
     let viewports = vec![vk::ViewportBuilder::new()
         .x(0.0)
         .y(0.0)
-        .width(swapchain_image_extent.width as f32)
-        .height(swapchain_image_extent.height as f32)
+        .width(image_extent.width as f32)
+        .height(image_extent.height as f32)
         .max_depth(1.0)];
     let scissors = vec![vk::Rect2DBuilder::new()
         .offset(vk::Offset2D { x: 0, y: 0 })
-        .extent(*swapchain_image_extent)];
+        .extent(*image_extent)];
     let viewport_state = vk::PipelineViewportStateCreateInfoBuilder::new()
         .viewports(&viewports)
         .scissors(&scissors);
@@ -967,8 +773,7 @@ unsafe fn find_supported_format(
 }
 
 unsafe fn draw(
-    ctx: &Context,
-    swapchain_state: &mut SwapchainState,
+    ctx: &mut Context,
     in_flight_fences: &[vk::Fence],
     image_available_semaphores: &[vk::Semaphore],
     render_finished_semaphores: &[vk::Semaphore],
@@ -976,9 +781,7 @@ unsafe fn draw(
     cmd_bufs: &[vk::CommandBuffer],
     framebuffer_resized: &mut bool,
     window_size: PhysicalSize<u32>,
-    surface: vk::SurfaceKHR,
     render_pass: vk::RenderPass,
-    queue: vk::Queue,
     geometry: &Geometry,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
@@ -993,22 +796,23 @@ unsafe fn draw(
         .unwrap();
 
     let maybe_image = ctx.device.acquire_next_image_khr(
-        swapchain_state.swapchain,
+        ctx.swapchain.handle(),
         u64::MAX,
         image_available_semaphores[frame],
         vk::Fence::null(),
     );
 
     if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR || *framebuffer_resized {
+        ctx.device
+            .queue_wait_idle(ctx.queues.graphics)
+            .expect("failed to wait on queue");
         *framebuffer_resized = false;
-        *swapchain_state = recreate_swapchain(
-            &ctx,
-            &swapchain_state,
-            surface,
-            window_size,
-            ctx.physical_device.surface_format,
-            ctx.physical_device.present_mode,
-            render_pass,
+        let PhysicalSize { width, height } = window_size;
+        ctx.swapchain.recreate(
+            &ctx.device,
+            &ctx.physical_device,
+            ctx.surface,
+            &vk::Extent2D { width, height },
         );
         return;
     } else if maybe_image.raw != vk::Result::SUCCESS {
@@ -1023,6 +827,7 @@ unsafe fn draw(
 
     upload_uniform_buffers(&ctx.device, &transform, uniforms[frame].1);
 
+    let framebuffers = ctx.swapchain.framebuffers(&ctx.device, render_pass);
     record_command_buffer(
         &ctx.device,
         pipeline,
@@ -1032,9 +837,9 @@ unsafe fn draw(
         vertex_buffer,
         index_buffer,
         render_pass,
-        swapchain_state.framebuffers[image_index as usize],
+        framebuffers[image_index as usize],
         descriptor_sets[frame],
-        &swapchain_state.image_extent,
+        ctx.swapchain.image_extent(),
     );
 
     let wait_semaphores = vec![image_available_semaphores[frame]];
@@ -1049,21 +854,23 @@ unsafe fn draw(
     let in_flight_fence = in_flight_fences[frame];
     ctx.device.reset_fences(&[in_flight_fence]).unwrap();
     ctx.device
-        .queue_submit(queue, &[submit_info], in_flight_fence)
+        .queue_submit(ctx.queues.graphics, &[submit_info], in_flight_fence)
         .unwrap();
 
-    let swapchains = vec![swapchain_state.swapchain];
+    let swapchains = vec![ctx.swapchain.handle()];
     let image_indices = vec![image_index];
     let present_info = vk::PresentInfoKHRBuilder::new()
         .wait_semaphores(&signal_semaphores)
         .swapchains(&swapchains)
         .image_indices(&image_indices);
 
-    ctx.device.queue_present_khr(queue, &present_info).unwrap();
+    ctx.device
+        .queue_present_khr(ctx.queues.graphics, &present_info)
+        .unwrap();
 }
 
 unsafe fn release_resources(
-    ctx: &Context,
+    ctx: &mut Context,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
     vertex_buffer: vk::Buffer,
     vertex_buffer_memory: vk::DeviceMemory,
@@ -1076,9 +883,7 @@ unsafe fn release_resources(
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    swapchain_state: &SwapchainState,
     render_pass: vk::RenderPass,
-    surface: vk::SurfaceKHR,
 ) {
     ctx.device.device_wait_idle().unwrap();
 
@@ -1108,12 +913,6 @@ unsafe fn release_resources(
 
     ctx.device
         .destroy_descriptor_set_layout(descriptor_set_layout, None);
-
-    cleanup_swapchain(&ctx.device, &swapchain_state);
-
-    ctx.instance.destroy_surface_khr(surface, None);
-
-    validation::deinit(&ctx.instance);
 }
 
 fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
