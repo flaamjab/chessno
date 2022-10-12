@@ -1,9 +1,14 @@
+use std::io;
 use std::mem::{size_of, size_of_val};
+use std::path::Path;
+use std::ptr;
 use std::time::Instant;
 use std::{ffi::c_void, sync::Arc};
 
 use cgmath::{Deg, Matrix4};
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
+use image::io::Reader as ImageReader;
+use image::EncodableLayout;
 use memoffset::offset_of;
 use winit::dpi::PhysicalSize;
 use winit::{
@@ -19,7 +24,7 @@ use crate::geometry::{Geometry, Vertex};
 use crate::logging::info;
 use crate::shader::Shader;
 use crate::sync_pool::SyncPool;
-use crate::transform::Transform;
+use crate::transform::{self, Transform};
 
 const TITLE: &str = "Isochess";
 const FRAMES_IN_FLIGHT: usize = 2;
@@ -120,6 +125,9 @@ pub unsafe fn init() {
         ctx.queues.graphics,
     );
 
+    let path = Path::new("./assets/textures/crate.jpg");
+    create_texture_image(&ctx, &path).expect("failed to create texture");
+
     // https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Command_buffers
     let command_pool_info = vk::CommandPoolCreateInfoBuilder::new()
         .queue_family_index(ctx.physical_device.queue_families.graphics)
@@ -160,7 +168,7 @@ pub unsafe fn init() {
     let fov = 45.0;
 
     let PhysicalSize { width, height } = window.inner_size();
-    let mut transform = Transform::new_test(45.0, width as f32 / height as f32);
+    let mut transform = Transform::new_test(fov, width as f32 / height as f32);
 
     #[allow(clippy::collapsible_match, clippy::single_match)]
     event_loop.run(move |event, _, control_flow| match event {
@@ -171,7 +179,8 @@ pub unsafe fn init() {
             WindowEvent::Resized(_) => {
                 framebuffer_resized = true;
                 let size = window.inner_size();
-                transform = transform.with_ortho(fov, aspect_ratio(size));
+                let projection = transform::perspective(fov, aspect_ratio(size), 0.1, 100.0);
+                transform = transform.with_projection(&projection);
             }
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
             _ => (),
@@ -197,7 +206,7 @@ pub unsafe fn init() {
             if angle > 360.0 {
                 angle -= 360.0
             }
-            transform = transform.with_model(Matrix4::from_angle_z(Deg(angle)));
+            transform = transform.with_model(&Matrix4::from_angle_z(Deg(angle)));
 
             draw(
                 &mut ctx,
@@ -317,7 +326,7 @@ unsafe fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::NONE)
+        .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
@@ -379,7 +388,7 @@ unsafe fn record_command_buffer(
     render_pass: vk::RenderPass,
     framebuffer: vk::Framebuffer,
     descriptor_set: vk::DescriptorSet,
-    draw_area_extent: &vk::Extent2D,
+    draw_area_size: &vk::Extent2D,
 ) {
     let cmd_buf_begin_info = vk::CommandBufferBeginInfoBuilder::new();
     device
@@ -396,7 +405,7 @@ unsafe fn record_command_buffer(
         .framebuffer(framebuffer)
         .render_area(vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: *draw_area_extent,
+            extent: *draw_area_size,
         })
         .clear_values(&clear_values);
 
@@ -423,14 +432,14 @@ unsafe fn record_command_buffer(
     let viewport = vk::ViewportBuilder::new()
         .x(0.0)
         .y(0.0)
-        .width(draw_area_extent.width as f32)
-        .height(draw_area_extent.height as f32)
+        .width(draw_area_size.width as f32)
+        .height(draw_area_size.height as f32)
         .min_depth(0.0)
         .max_depth(1.0);
     device.cmd_set_viewport(cmd_buf, 0, &[viewport]);
 
     let scissor = vk::Rect2D {
-        extent: *draw_area_extent,
+        extent: *draw_area_size,
         offset: vk::Offset2D { x: 0, y: 0 },
     }
     .into_builder();
@@ -444,12 +453,12 @@ unsafe fn record_command_buffer(
 
 unsafe fn allocate_buffer(
     ctx: &Context,
-    size: vk::DeviceSize,
+    size: usize,
     usage: vk::BufferUsageFlags,
     properties: vk::MemoryPropertyFlags,
 ) -> (vk::Buffer, vk::DeviceMemory) {
     let buffer_info = vk::BufferCreateInfoBuilder::new()
-        .size(size)
+        .size(size as vk::DeviceSize)
         .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
@@ -482,7 +491,7 @@ unsafe fn create_vertex_buffer(
     copy_queue_family: u32,
     copy_queue: vk::Queue,
 ) -> (vk::Buffer, vk::DeviceMemory) {
-    let size = (size_of_val(&vertices[0]) * vertices.len()) as u64;
+    let size = (size_of_val(&vertices[0]) * vertices.len());
     let (staging_buf, staging_mem) = allocate_buffer(
         ctx,
         size,
@@ -490,12 +499,12 @@ unsafe fn create_vertex_buffer(
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     );
 
-    let data = ctx
-        .device
-        .map_memory(staging_mem, 0, size, vk::MemoryMapFlags::empty())
-        .unwrap();
-    data.copy_from_nonoverlapping(vertices.as_ptr() as *const c_void, size as usize);
-    ctx.device.unmap_memory(staging_mem);
+    memcpy_gpu(
+        &ctx.device,
+        vertices.as_ptr() as *const c_void,
+        staging_mem,
+        size,
+    );
 
     let (vertex_buf, vertex_mem) = allocate_buffer(
         ctx,
@@ -523,7 +532,7 @@ unsafe fn copy_buffer(
     ctx: &Context,
     dst_buf: vk::Buffer,
     src_buf: vk::Buffer,
-    size: vk::DeviceSize,
+    size: usize,
     copy_queue_family: u32,
     copy_queue: vk::Queue,
 ) {
@@ -550,7 +559,7 @@ unsafe fn copy_buffer(
         .begin_command_buffer(cmd_buf, &begin_info)
         .unwrap();
 
-    let copy_region = vk::BufferCopyBuilder::new().size(size);
+    let copy_region = vk::BufferCopyBuilder::new().size(size as vk::DeviceSize);
 
     ctx.device
         .cmd_copy_buffer(cmd_buf, src_buf, dst_buf, &[copy_region]);
@@ -574,7 +583,7 @@ unsafe fn create_index_buffer(
     copy_queue_family: u32,
     copy_queue: vk::Queue,
 ) -> (vk::Buffer, vk::DeviceMemory) {
-    let buf_size = (size_of_val(&indices[0]) * indices.len()) as u64;
+    let buf_size = (size_of_val(&indices[0]) * indices.len());
 
     let (staging_buf, staging_mem) = allocate_buffer(
         ctx,
@@ -583,13 +592,12 @@ unsafe fn create_index_buffer(
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
     );
 
-    let data = ctx
-        .device
-        .map_memory(staging_mem, 0, buf_size, vk::MemoryMapFlags::empty())
-        .unwrap();
-
-    std::ptr::copy_nonoverlapping(indices.as_ptr() as *const c_void, data, buf_size as usize);
-    ctx.device.unmap_memory(staging_mem);
+    memcpy_gpu(
+        &ctx.device,
+        indices.as_ptr() as *const c_void,
+        staging_mem,
+        buf_size,
+    );
 
     let (index_buf, index_mem) = allocate_buffer(
         ctx,
@@ -632,7 +640,7 @@ unsafe fn find_memory_type(
 }
 
 unsafe fn create_uniform_buffers(ctx: &Context) -> Vec<(vk::Buffer, vk::DeviceMemory)> {
-    let buf_size = size_of::<Transform>() as u64;
+    let buf_size = size_of::<Transform>();
     (0..FRAMES_IN_FLIGHT)
         .map(|_| {
             allocate_buffer(
@@ -770,6 +778,43 @@ unsafe fn find_supported_format(
             format_suitable
         })
         .map(|&f| f)
+}
+
+unsafe fn create_texture_image(ctx: &Context, path: &Path) -> io::Result<()> {
+    let image = ImageReader::open(path)?
+        .decode()
+        .expect("failed to decode image at {:path}");
+    let image = image.to_rgba32f();
+    let image_size = image.len();
+
+    let (staging_buf, staging_mem) = allocate_buffer(
+        ctx,
+        image_size,
+        vk::BufferUsageFlags::TRANSFER_SRC,
+        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+    );
+
+    memcpy_gpu(
+        &ctx.device,
+        image.as_bytes().as_ptr() as *const c_void,
+        staging_mem,
+        image_size,
+    );
+
+    Ok(())
+}
+
+unsafe fn memcpy_gpu(
+    device: &DeviceLoader,
+    src: *const c_void,
+    dst: vk::DeviceMemory,
+    size: usize,
+) {
+    let data = device
+        .map_memory(dst, 0, size as vk::DeviceSize, vk::MemoryMapFlags::empty())
+        .expect("failed to map memory");
+    ptr::copy_nonoverlapping(src, data, size as usize);
+    device.unmap_memory(dst);
 }
 
 unsafe fn draw(
