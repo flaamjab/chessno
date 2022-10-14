@@ -10,6 +10,7 @@ pub struct PhysicalDevice {
     pub surface_format: vk::SurfaceFormatKHR,
     pub present_mode: vk::PresentModeKHR,
     pub properties: vk::PhysicalDeviceProperties,
+    pub features: vk::PhysicalDeviceFeatures,
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
 }
 
@@ -78,7 +79,7 @@ impl PhysicalDevice {
                 let supported_device_extensions = instance
                     .enumerate_device_extension_properties(physical_device, None, None)
                     .unwrap();
-                let device_extensions_supported =
+                let required_extensions_supported =
                     required_extensions.iter().all(|device_extension| {
                         let device_extension = CStr::from_ptr(*device_extension);
 
@@ -87,11 +88,13 @@ impl PhysicalDevice {
                         })
                     });
 
-                if !device_extensions_supported {
+                let features = instance.get_physical_device_features(physical_device);
+
+                if !required_extensions_supported || features.sampler_anisotropy == 0 {
                     return None;
                 }
 
-                let device_properties = instance.get_physical_device_properties(physical_device);
+                let properties = instance.get_physical_device_properties(physical_device);
 
                 let surface_capabilities = instance
                     .get_physical_device_surface_capabilities_khr(physical_device, surface)
@@ -103,7 +106,8 @@ impl PhysicalDevice {
                     surface_format: format,
                     surface_capabilities,
                     present_mode,
-                    properties: device_properties,
+                    properties,
+                    features,
                 })
             })
             .max_by_key(

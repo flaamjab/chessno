@@ -9,7 +9,7 @@ mod geometry;
 mod logging;
 mod mesh;
 mod physical_device;
-mod renderer;
+// mod renderer;
 mod shader;
 mod swapchain;
 mod sync_pool;

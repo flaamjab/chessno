@@ -49,7 +49,7 @@ impl Context {
             }
 
             let instance =
-                new_instance(&entry, app_name, engine_name, &instance_extensions, &layers);
+                create_instance(&entry, app_name, engine_name, &instance_extensions, &layers);
             let surface = surface::create_surface(&instance, &window, None)
                 .expect("failed to create a surface");
 
@@ -61,7 +61,7 @@ impl Context {
 
             #[cfg(debug_assertions)]
             let device =
-                new_logical_device(&instance, &physical_device, &device_extensions, &layers);
+                create_logical_device(&instance, &physical_device, &device_extensions, &layers);
 
             let graphics_queue =
                 device.get_device_queue(physical_device.queue_families.graphics, 0);
@@ -108,7 +108,7 @@ impl Drop for Context {
     }
 }
 
-unsafe fn new_instance(
+unsafe fn create_instance(
     entry: &EntryLoader,
     app_name: &str,
     engine_name: &str,
@@ -132,7 +132,7 @@ unsafe fn new_instance(
     Arc::new(InstanceLoader::new(&entry, &instance_info).expect("failed to create instance"))
 }
 
-unsafe fn new_logical_device(
+unsafe fn create_logical_device(
     instance: &InstanceLoader,
     physical_device: &PhysicalDevice,
     device_extensions: &[*const c_char],
@@ -141,7 +141,8 @@ unsafe fn new_logical_device(
     let queue_infos = vec![vk::DeviceQueueCreateInfoBuilder::new()
         .queue_family_index(physical_device.queue_families.graphics)
         .queue_priorities(&[1.0])];
-    let features = vk::PhysicalDeviceFeaturesBuilder::new();
+
+    let features = vk::PhysicalDeviceFeaturesBuilder::new().sampler_anisotropy(true);
 
     let device_info = vk::DeviceCreateInfoBuilder::new()
         .queue_create_infos(&queue_infos)

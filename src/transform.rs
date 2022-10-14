@@ -13,12 +13,20 @@ pub struct Transform {
 }
 
 impl Transform {
+    pub fn new(model: &Matrix4<f32>, view: &Matrix4<f32>, projection: &Matrix4<f32>) -> Self {
+        Transform {
+            model: *model,
+            view: *view,
+            projection: *projection,
+        }
+    }
+
     pub fn new_test(fov: f32, aspect: f32) -> Self {
         let projection = perspective(fov, aspect, NEAR, FAR);
         Transform {
             model: Matrix4::identity(),
             view: Matrix4::look_at_rh(
-                Point3::from_value(2.0),
+                Point3::from_value(1.0),
                 Point3::from_value(0.0),
                 Vector3::unit_z(),
             ),
@@ -26,24 +34,29 @@ impl Transform {
         }
     }
 
-    pub fn with_ortho(&self, fov: f32, aspect: f32) -> Self {
-        let projection = perspective(fov, aspect, NEAR, FAR);
+    pub fn with_projection(&self, projection: &Matrix4<f32>) -> Self {
         Transform {
-            projection,
+            projection: *projection,
             ..*self
         }
     }
 
-    pub fn with_model(&self, model: Matrix4<f32>) -> Self {
-        Transform { model, ..*self }
+    pub fn with_model(&self, model: &Matrix4<f32>) -> Self {
+        Transform {
+            model: *model,
+            ..*self
+        }
     }
 
-    pub fn with_view(&self, view: Matrix4<f32>) -> Self {
-        Transform { view, ..*self }
+    pub fn with_view(&self, view: &Matrix4<f32>) -> Self {
+        Transform {
+            view: *view,
+            ..*self
+        }
     }
 }
 
-fn perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Matrix4<f32> {
+pub fn perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Matrix4<f32> {
     let fov: Rad<f32> = Deg(fov).into();
     let focal_length = 1.0 / (fov / 2.0).tan();
 

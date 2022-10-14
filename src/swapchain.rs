@@ -19,7 +19,7 @@ impl Swapchain {
         draw_area_size: &vk::Extent2D,
     ) -> Self {
         // Select image count
-        let image_count = compute_image_count(physical_device);
+        let image_count = select_image_count(physical_device);
         // Find extent
         let image_extent = compute_extent(physical_device, &draw_area_size);
 
@@ -112,7 +112,7 @@ impl Swapchain {
     }
 }
 
-fn compute_image_count(physical_device: &PhysicalDevice) -> u32 {
+fn select_image_count(physical_device: &PhysicalDevice) -> u32 {
     let min_image_count = physical_device.surface_capabilities.min_image_count;
     let max_image_count = physical_device.surface_capabilities.max_image_count;
 

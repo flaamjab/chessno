@@ -2,9 +2,11 @@ use winit::window::Window;
 
 use crate::context::Context;
 use crate::mesh::Mesh;
+use crate::swapchain::Swapchain;
 
 pub struct Renderer {
     context: Context,
+    swapchain: Swapchain,
 }
 
 impl Renderer {
