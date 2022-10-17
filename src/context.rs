@@ -95,14 +95,14 @@ impl Drop for Context {
     fn drop(&mut self) {
         debug!("Dropping Vulkan context");
         unsafe {
-            #[cfg(all(debug_assertions, not(target_os = "android")))]
-            validation::deinit(&self.instance);
-
             self.swapchain.destroy(&self.device);
 
             self.device.destroy_device(None);
 
             self.instance.destroy_surface_khr(self.surface, None);
+
+            #[cfg(all(debug_assertions, not(target_os = "android")))]
+            validation::deinit(&self.instance);
             self.instance.destroy_instance(None);
         }
     }

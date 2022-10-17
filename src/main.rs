@@ -1,5 +1,5 @@
-use chess::desktop_main;
+use chess::linux_main;
 
 fn main() {
-    desktop_main();
+    linux_main();
 }

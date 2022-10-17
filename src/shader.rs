@@ -13,7 +13,7 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub unsafe fn new(
+    pub fn new(
         device: &Arc<DeviceLoader>,
         programs: &[(&[u8], vk::ShaderStageFlagBits)],
     ) -> Result<Shader, Error> {
@@ -21,11 +21,12 @@ impl Shader {
         for (bytes, stage) in programs {
             let vert_decoded = utils::decode_spv(bytes).unwrap();
             let module_info = vk::ShaderModuleCreateInfoBuilder::new().code(&vert_decoded);
-            let module = device
-                .create_shader_module(&module_info, None)
-                .map_err(|e| Error::from_vulkan_result(e))?;
-
-            modules.push((module, *stage));
+            unsafe {
+                let module = device
+                    .create_shader_module(&module_info, None)
+                    .map_err(|e| Error::from_vulkan_result(e))?;
+                modules.push((module, *stage));
+            }
         }
 
         Ok(Self {

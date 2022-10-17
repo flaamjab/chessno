@@ -2,35 +2,20 @@ use std::io;
 use std::mem::{size_of, size_of_val};
 use std::path::Path;
 use std::ptr;
-use std::time::Instant;
 use std::{ffi::c_void, sync::Arc};
 
-use cgmath::{Deg, Matrix4};
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 use image::io::Reader as ImageReader;
 use image::EncodableLayout;
 use memoffset::offset_of;
+use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
-use winit::{
-    event::{
-        DeviceEvent, ElementState, Event, KeyboardInput, StartCause, VirtualKeyCode, WindowEvent,
-    },
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
 
 use crate::context::Context;
-use crate::geometry::{Geometry, Vertex};
-use crate::logging::info;
+use crate::geometry::Vertex;
+use crate::logging::trace;
 use crate::shader::Shader;
-use crate::sync_pool::SyncPool;
-use crate::transform::{self, Transform};
-
-const TITLE: &str = "Isochess";
-const FRAMES_IN_FLIGHT: usize = 2;
-
-const SHADER_VERT: &[u8] = include_bytes!("../shaders/unlit.vert.spv");
-const SHADER_FRAG: &[u8] = include_bytes!("../shaders/unlit.frag.spv");
+use crate::transform::Transform;
 
 impl Transform {
     fn binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
@@ -71,204 +56,7 @@ impl Vertex {
     }
 }
 
-pub unsafe fn init() {
-    let geometry = Geometry::new_plane();
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title(TITLE)
-        .build(&event_loop)
-        .unwrap();
-
-    let mut ctx = Context::new(&window, "Main", "No Engine");
-
-    let shader = Shader::new(
-        &ctx.device,
-        &[
-            (SHADER_VERT, vk::ShaderStageFlagBits::VERTEX),
-            (SHADER_FRAG, vk::ShaderStageFlagBits::FRAGMENT),
-        ],
-    )
-    .expect("failed to create shader");
-    let shader_stages = shader.stage_infos();
-
-    let render_pass = create_render_pass(&ctx);
-
-    let uniforms = create_uniform_buffers(&ctx);
-    let descriptor_pool = create_descriptor_pool(&ctx.device);
-
-    let path = Path::new("./assets/textures/happy-tree.png");
-    let (texture, texture_mem) = create_texture(
-        &ctx,
-        &path,
-        ctx.queues.graphics,
-        ctx.physical_device.queue_families.graphics,
-    )
-    .expect("failed to create texture");
-
-    let texture_view = create_texture_view(&ctx.device, texture);
-    let sampler = create_sampler(&ctx);
-
-    let descriptor_set_layout = create_descriptor_set_layout(&ctx);
-    let descriptor_set_layouts = [descriptor_set_layout; 2];
-
-    let descriptor_sets = create_descriptor_sets(
-        &ctx.device,
-        descriptor_pool,
-        &descriptor_set_layouts,
-        &uniforms,
-        (texture_view, sampler),
-    );
-
-    let (pipeline, pipeline_layout) =
-        create_pipeline(&ctx, &shader_stages, render_pass, &descriptor_set_layouts);
-
-    drop(shader_stages);
-
-    let (vertex_buffer, vertex_buffer_memory) = create_vertex_buffer(
-        &ctx,
-        &geometry.vertices(),
-        ctx.physical_device.queue_families.graphics,
-        ctx.queues.graphics,
-    );
-
-    let (index_buffer, index_buffer_memory) = create_index_buffer(
-        &ctx,
-        &geometry.indices(),
-        ctx.physical_device.queue_families.graphics,
-        ctx.queues.graphics,
-    );
-
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Command_buffers
-    let command_pool_info = vk::CommandPoolCreateInfoBuilder::new()
-        .queue_family_index(ctx.physical_device.queue_families.graphics)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let command_pool = ctx
-        .device
-        .create_command_pool(&command_pool_info, None)
-        .unwrap();
-
-    let framebuffers = ctx.swapchain.framebuffers(&ctx.device, render_pass);
-    let cmd_buf_allocate_info = vk::CommandBufferAllocateInfoBuilder::new()
-        .command_pool(command_pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(framebuffers.len() as _);
-    let cmd_bufs = ctx
-        .device
-        .allocate_command_buffers(&cmd_buf_allocate_info)
-        .unwrap();
-
-    // https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation
-    let mut sync_pool = SyncPool::new();
-    let image_available_semaphores: Vec<_> = (0..FRAMES_IN_FLIGHT)
-        .map(|_| sync_pool.semaphore(&ctx.device))
-        .collect();
-    let render_finished_semaphores: Vec<_> = (0..FRAMES_IN_FLIGHT)
-        .map(|_| sync_pool.semaphore(&ctx.device))
-        .collect();
-
-    let in_flight_fences: Vec<_> = (0..FRAMES_IN_FLIGHT)
-        .map(|_| sync_pool.fence(&ctx.device, true))
-        .collect();
-
-    let mut frame = 0;
-    let mut framebuffer_resized = false;
-    let mut prev_cur_time = Instant::now();
-    let mut angle = 0.0;
-    let speed = 10.0;
-    let fov = 45.0;
-
-    let PhysicalSize { width, height } = window.inner_size();
-    let mut transform = Transform::new_test(fov, width as f32 / height as f32);
-
-    #[allow(clippy::collapsible_match, clippy::single_match)]
-    event_loop.run(move |event, _, control_flow| match event {
-        Event::NewEvents(StartCause::Init) => {
-            *control_flow = ControlFlow::Poll;
-        }
-        Event::DeviceEvent { event, .. } => match event {
-            DeviceEvent::Key(KeyboardInput {
-                virtual_keycode: Some(keycode),
-                state,
-                ..
-            }) => match (keycode, state) {
-                (VirtualKeyCode::Escape, ElementState::Released) => {
-                    *control_flow = ControlFlow::Exit
-                }
-                _ => (),
-            },
-            _ => (),
-        },
-        Event::WindowEvent { event, .. } => match event {
-            WindowEvent::Resized(_) => {
-                framebuffer_resized = true;
-                let size = window.inner_size();
-                let projection = transform::perspective(fov, aspect_ratio(size), 0.1, 100.0);
-                transform = transform.with_projection(&projection);
-            }
-            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-            _ => (),
-        },
-        Event::MainEventsCleared => {
-            let cur_time = Instant::now();
-            let delta = cur_time.duration_since(prev_cur_time).as_secs_f32();
-            prev_cur_time = cur_time;
-            angle += delta * speed;
-            if angle > 360.0 {
-                angle -= 360.0
-            }
-            transform = transform.with_model(&Matrix4::from_angle_z(Deg(angle)));
-
-            draw(
-                &mut ctx,
-                &in_flight_fences,
-                &image_available_semaphores,
-                &render_finished_semaphores,
-                frame,
-                &cmd_bufs,
-                &mut framebuffer_resized,
-                window.inner_size(),
-                render_pass,
-                &geometry,
-                pipeline,
-                pipeline_layout,
-                vertex_buffer,
-                index_buffer,
-                &descriptor_sets,
-                &transform,
-                &uniforms,
-            );
-
-            frame = (frame + 1) % FRAMES_IN_FLIGHT;
-        }
-        Event::LoopDestroyed => {
-            release_resources(
-                &mut ctx,
-                &uniforms,
-                vertex_buffer,
-                vertex_buffer_memory,
-                index_buffer,
-                index_buffer_memory,
-                &mut sync_pool,
-                &shader,
-                descriptor_pool,
-                command_pool,
-                pipeline,
-                pipeline_layout,
-                descriptor_set_layout,
-                render_pass,
-                texture,
-                texture_mem,
-                texture_view,
-                sampler,
-            );
-            info!("Exited cleanly");
-        }
-        _ => (),
-    })
-}
-
-unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Graphics_pipeline_basics/Render_passes
+pub unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
     let attachments = vec![vk::AttachmentDescriptionBuilder::new()
         .format(ctx.physical_device.surface_format.format)
         .samples(vk::SampleCountFlagBits::_1)
@@ -304,13 +92,12 @@ unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
         .unwrap()
 }
 
-unsafe fn create_pipeline(
+pub unsafe fn create_pipeline(
     ctx: &Context,
     shader_stages: &[vk::PipelineShaderStageCreateInfoBuilder],
     render_pass: vk::RenderPass,
     descriptor_set_layouts: &[vk::DescriptorSetLayout],
 ) -> (vk::Pipeline, vk::PipelineLayout) {
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions
     let attribute_descs = Vertex::attribute_descs();
     let binding_descs = [Vertex::binding_desc()];
     let vertex_input = vk::PipelineVertexInputStateCreateInfoBuilder::new()
@@ -340,7 +127,7 @@ unsafe fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::BACK)
+        .cull_mode(vk::CullModeFlags::NONE)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
@@ -369,7 +156,6 @@ unsafe fn create_pipeline(
     let dynamic_state_info = vk::PipelineDynamicStateCreateInfoBuilder::new()
         .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
 
-    // https://vulkan-tutorial.com/Drawing_a_triangle/Graphics_pipeline_basics/Conclusion
     let pipeline_info = vk::GraphicsPipelineCreateInfoBuilder::new()
         .stages(&shader_stages)
         .vertex_input_state(&vertex_input)
@@ -391,7 +177,7 @@ unsafe fn create_pipeline(
     (pipeline, pipeline_layout)
 }
 
-unsafe fn record_command_buffer(
+pub unsafe fn record_command_buffer(
     device: &DeviceLoader,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
@@ -465,7 +251,7 @@ unsafe fn record_command_buffer(
     device.end_command_buffer(cmd_buf).unwrap();
 }
 
-unsafe fn allocate_buffer(
+pub unsafe fn allocate_buffer(
     ctx: &Context,
     size: usize,
     usage: vk::BufferUsageFlags,
@@ -499,7 +285,7 @@ unsafe fn allocate_buffer(
     (buffer, buffer_memory)
 }
 
-unsafe fn create_vertex_buffer(
+pub unsafe fn create_vertex_buffer(
     ctx: &Context,
     vertices: &[Vertex],
     copy_queue_family: u32,
@@ -513,7 +299,7 @@ unsafe fn create_vertex_buffer(
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     );
 
-    memcpy_gpu(
+    copy_to_gpu(
         &ctx.device,
         vertices.as_ptr() as *const c_void,
         staging_mem,
@@ -542,7 +328,7 @@ unsafe fn create_vertex_buffer(
     (vertex_buf, vertex_mem)
 }
 
-unsafe fn copy_buffer_to_image(
+pub unsafe fn copy_buffer_to_image(
     device: &DeviceLoader,
     buffer: vk::Buffer,
     image: vk::Image,
@@ -580,7 +366,7 @@ unsafe fn copy_buffer_to_image(
     end_once_commands(device, cmd_pool, cmd_buf, copy_queue)
 }
 
-unsafe fn copy_buffer(
+pub unsafe fn copy_buffer(
     ctx: &Context,
     dst_buf: vk::Buffer,
     src_buf: vk::Buffer,
@@ -598,7 +384,7 @@ unsafe fn copy_buffer(
     end_once_commands(&ctx.device, cmd_pool, cmd_buf, copy_queue);
 }
 
-unsafe fn create_index_buffer(
+pub unsafe fn create_index_buffer(
     ctx: &Context,
     indices: &[u16],
     copy_queue_family: u32,
@@ -613,7 +399,7 @@ unsafe fn create_index_buffer(
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
     );
 
-    memcpy_gpu(
+    copy_to_gpu(
         &ctx.device,
         indices.as_ptr() as *const c_void,
         staging_mem,
@@ -642,7 +428,7 @@ unsafe fn create_index_buffer(
     (index_buf, index_mem)
 }
 
-unsafe fn find_memory_type(
+pub unsafe fn find_memory_type(
     ctx: &Context,
     type_filter: u32,
     properties: vk::MemoryPropertyFlags,
@@ -660,9 +446,12 @@ unsafe fn find_memory_type(
     panic!("Failed to find suitable memory type");
 }
 
-unsafe fn create_uniform_buffers(ctx: &Context) -> Vec<(vk::Buffer, vk::DeviceMemory)> {
+pub unsafe fn create_uniform_buffers(
+    ctx: &Context,
+    frames_in_flight: usize,
+) -> SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]> {
     let buf_size = size_of::<Transform>();
-    (0..FRAMES_IN_FLIGHT)
+    (0..frames_in_flight)
         .map(|_| {
             allocate_buffer(
                 ctx,
@@ -674,7 +463,7 @@ unsafe fn create_uniform_buffers(ctx: &Context) -> Vec<(vk::Buffer, vk::DeviceMe
         .collect()
 }
 
-unsafe fn upload_uniform_buffers(
+pub unsafe fn upload_uniform_buffers(
     device: &Arc<DeviceLoader>,
     transform: &Transform,
     uniform_mem: vk::DeviceMemory,
@@ -689,7 +478,7 @@ unsafe fn upload_uniform_buffers(
     device.unmap_memory(uniform_mem);
 }
 
-unsafe fn create_descriptor_set_layout(ctx: &Context) -> vk::DescriptorSetLayout {
+pub unsafe fn create_descriptor_set_layout(ctx: &Context) -> vk::DescriptorSetLayout {
     let transform_binding = Transform::binding();
     let sampler_binding = create_sampler_binding();
     let bindings = [transform_binding, sampler_binding];
@@ -712,30 +501,34 @@ fn create_sampler_binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
 }
 
-unsafe fn create_descriptor_pool(device: &Arc<DeviceLoader>) -> vk::DescriptorPool {
+pub unsafe fn create_descriptor_pool(
+    device: &Arc<DeviceLoader>,
+    frames_in_flight: usize,
+) -> vk::DescriptorPool {
     let pool_sizes = [
         vk::DescriptorPoolSizeBuilder::new()
             ._type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(FRAMES_IN_FLIGHT as u32),
+            .descriptor_count(frames_in_flight as u32),
         vk::DescriptorPoolSizeBuilder::new()
             ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(FRAMES_IN_FLIGHT as u32),
+            .descriptor_count(frames_in_flight as u32),
     ];
     let pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
         .pool_sizes(&pool_sizes)
-        .max_sets(FRAMES_IN_FLIGHT as u32);
+        .max_sets(frames_in_flight as u32);
 
     device
         .create_descriptor_pool(&pool_info, None)
         .expect("Failed to create a descriptor pool")
 }
 
-unsafe fn create_descriptor_sets(
+pub unsafe fn create_descriptor_sets(
     device: &Arc<DeviceLoader>,
     pool: vk::DescriptorPool,
     layouts: &[vk::DescriptorSetLayout],
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
     texture: (vk::ImageView, vk::Sampler),
+    frames_in_flight: usize,
 ) -> Vec<vk::DescriptorSet> {
     let alloc_info = vk::DescriptorSetAllocateInfoBuilder::new()
         .descriptor_pool(pool)
@@ -743,10 +536,10 @@ unsafe fn create_descriptor_sets(
 
     let descriptor_sets = device
         .allocate_descriptor_sets(&alloc_info)
-        .expect("Faled to allocate descriptor sets")
+        .expect("failed to allocate descriptor sets")
         .to_vec();
 
-    for ix in 0..FRAMES_IN_FLIGHT {
+    for ix in 0..frames_in_flight {
         let buffer_info = vk::DescriptorBufferInfoBuilder::new()
             .buffer(uniforms[ix].0)
             .offset(0)
@@ -784,7 +577,7 @@ fn has_stencil_component(format: vk::Format) -> bool {
     format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D32_SFLOAT_S8_UINT
 }
 
-unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
+pub unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
     find_supported_format(
         ctx,
         &[
@@ -797,7 +590,7 @@ unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
     )
 }
 
-unsafe fn find_supported_format(
+pub unsafe fn find_supported_format(
     ctx: &Context,
     candidates: &[vk::Format],
     tiling: vk::ImageTiling,
@@ -830,7 +623,7 @@ unsafe fn find_supported_format(
         .map(|&f| f)
 }
 
-unsafe fn create_texture(
+pub unsafe fn create_texture(
     ctx: &Context,
     path: &Path,
     copy_queue: vk::Queue,
@@ -849,7 +642,7 @@ unsafe fn create_texture(
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     );
 
-    memcpy_gpu(
+    copy_to_gpu(
         &ctx.device,
         image.as_bytes().as_ptr() as *const c_void,
         staging_mem,
@@ -901,7 +694,7 @@ unsafe fn create_texture(
     Ok((texture, texture_mem))
 }
 
-unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::ImageView {
+pub unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::ImageView {
     let image_view_info = vk::ImageViewCreateInfoBuilder::new()
         .image(texture)
         .view_type(vk::ImageViewType::_2D)
@@ -919,7 +712,7 @@ unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::
         .expect("failed to create texture view")
 }
 
-unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
+pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
     let max_anisotropy = ctx.physical_device.properties.limits.max_sampler_anisotropy;
     let info = vk::SamplerCreateInfoBuilder::new()
         .mag_filter(vk::Filter::LINEAR)
@@ -943,7 +736,7 @@ unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
         .expect("failed to create a texture sampler")
 }
 
-unsafe fn transition_image_layout(
+pub unsafe fn transition_image_layout(
     device: &DeviceLoader,
     image: vk::Image,
     format: vk::Format,
@@ -1003,7 +796,7 @@ unsafe fn transition_image_layout(
     end_once_commands(device, cmd_pool, cmd_buf, copy_queue);
 }
 
-unsafe fn begin_once_commands(
+pub unsafe fn begin_once_commands(
     device: &DeviceLoader,
     copy_queue_family: u32,
 ) -> (vk::CommandBuffer, vk::CommandPool) {
@@ -1027,7 +820,7 @@ unsafe fn begin_once_commands(
     (cmd_buf, cmd_pool)
 }
 
-unsafe fn end_once_commands(
+pub unsafe fn end_once_commands(
     device: &DeviceLoader,
     cmd_pool: vk::CommandPool,
     cmd_buf: vk::CommandBuffer,
@@ -1051,7 +844,7 @@ unsafe fn end_once_commands(
     device.destroy_command_pool(cmd_pool, None);
 }
 
-unsafe fn create_transient_command_pool(
+pub unsafe fn create_transient_command_pool(
     device: &DeviceLoader,
     copy_queue_family: u32,
 ) -> vk::CommandPool {
@@ -1064,7 +857,7 @@ unsafe fn create_transient_command_pool(
         .expect("Failed to create transient command pool for staging buffer transfer")
 }
 
-unsafe fn create_image(
+pub unsafe fn create_image(
     ctx: &Context,
     width: u32,
     height: u32,
@@ -1111,7 +904,7 @@ unsafe fn create_image(
     (image, mem)
 }
 
-unsafe fn memcpy_gpu(
+pub unsafe fn copy_to_gpu(
     device: &DeviceLoader,
     src: *const c_void,
     dst: vk::DeviceMemory,
@@ -1124,7 +917,7 @@ unsafe fn memcpy_gpu(
     device.unmap_memory(dst);
 }
 
-unsafe fn draw(
+pub unsafe fn draw(
     ctx: &mut Context,
     in_flight_fences: &[vk::Fence],
     image_available_semaphores: &[vk::Semaphore],
@@ -1132,13 +925,13 @@ unsafe fn draw(
     frame: usize,
     cmd_bufs: &[vk::CommandBuffer],
     framebuffer_resized: &mut bool,
-    window_size: PhysicalSize<u32>,
+    window_size: &vk::Extent2D,
     render_pass: vk::RenderPass,
-    geometry: &Geometry,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
+    index_count: usize,
     descriptor_sets: &[vk::DescriptorSet],
     transform: &Transform,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
@@ -1159,13 +952,9 @@ unsafe fn draw(
             .queue_wait_idle(ctx.queues.graphics)
             .expect("failed to wait on queue");
         *framebuffer_resized = false;
-        let PhysicalSize { width, height } = window_size;
-        ctx.swapchain.recreate(
-            &ctx.device,
-            &ctx.physical_device,
-            ctx.surface,
-            &vk::Extent2D { width, height },
-        );
+        trace!("Recreating swapchain");
+        ctx.swapchain
+            .recreate(&ctx.device, &ctx.physical_device, ctx.surface, &window_size);
         return;
     } else if maybe_image.raw != vk::Result::SUCCESS {
         panic!("Failed to acquire image from swapchain, aborting...");
@@ -1185,7 +974,7 @@ unsafe fn draw(
         pipeline,
         pipeline_layout,
         buf,
-        geometry.indices().len(),
+        index_count,
         vertex_buffer,
         index_buffer,
         render_pass,
@@ -1221,14 +1010,9 @@ unsafe fn draw(
         .unwrap();
 }
 
-unsafe fn release_resources(
+pub unsafe fn release_resources(
     ctx: &mut Context,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    vertex_buffer: vk::Buffer,
-    vertex_buffer_memory: vk::DeviceMemory,
-    index_buffer: vk::Buffer,
-    index_buffer_memory: vk::DeviceMemory,
-    sync_pool: &mut SyncPool,
     shader: &Shader,
     descriptor_pool: vk::DescriptorPool,
     command_pool: vk::CommandPool,
@@ -1253,13 +1037,6 @@ unsafe fn release_resources(
         ctx.device.free_memory(*m, None);
     }
 
-    ctx.device.destroy_buffer(vertex_buffer, None);
-    ctx.device.free_memory(vertex_buffer_memory, None);
-
-    ctx.device.destroy_buffer(index_buffer, None);
-    ctx.device.free_memory(index_buffer_memory, None);
-
-    sync_pool.destroy_all(&ctx.device);
     shader.destroy(&ctx.device);
 
     ctx.device.destroy_descriptor_pool(descriptor_pool, None);
@@ -1276,7 +1053,7 @@ unsafe fn release_resources(
         .destroy_descriptor_set_layout(descriptor_set_layout, None);
 }
 
-fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
+pub fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
     let PhysicalSize { width, height } = size;
     width as f32 / height as f32
 }

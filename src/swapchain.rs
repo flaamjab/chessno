@@ -1,6 +1,12 @@
+use std::{
+    cell::{Ref, RefCell},
+    ops::Deref,
+};
+
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 
+use crate::logging::trace;
 use crate::physical_device::PhysicalDevice;
 
 pub struct Swapchain {
@@ -8,37 +14,38 @@ pub struct Swapchain {
     image_views: SmallVec<[vk::ImageView; 8]>,
     image_extent: vk::Extent2D,
     image_count: u32,
-    framebuffers: Option<SmallVec<[vk::Framebuffer; 8]>>,
+    framebuffers: RefCell<Option<SmallVec<[vk::Framebuffer; 8]>>>,
 }
 
 impl Swapchain {
-    pub unsafe fn new(
+    pub fn new(
         device: &DeviceLoader,
         physical_device: &PhysicalDevice,
         surface: vk::SurfaceKHR,
         draw_area_size: &vk::Extent2D,
     ) -> Self {
-        // Select image count
-        let image_count = select_image_count(physical_device);
-        // Find extent
-        let image_extent = compute_extent(physical_device, &draw_area_size);
+        let image_count = select_image_count(&physical_device);
+        let image_extent = compute_extent(&physical_device, &draw_area_size);
 
-        let swapchain = create_swapchain(
-            device,
-            physical_device,
-            surface,
-            image_count,
-            &image_extent,
-            vk::SwapchainKHR::null(),
-        );
-        let image_views = create_image_views(device, swapchain, physical_device.surface_format);
+        unsafe {
+            let swapchain = create_swapchain(
+                &device,
+                &physical_device,
+                surface,
+                image_count,
+                &image_extent,
+                vk::SwapchainKHR::null(),
+            );
+            let image_views =
+                create_image_views(&device, swapchain, physical_device.surface_format);
 
-        Self {
-            handle: swapchain,
-            image_views,
-            image_count,
-            image_extent,
-            framebuffers: None,
+            Self {
+                handle: swapchain,
+                image_views,
+                image_count,
+                image_extent,
+                framebuffers: RefCell::new(None),
+            }
         }
     }
 
@@ -61,12 +68,15 @@ impl Swapchain {
             self.handle,
         );
 
+        trace!("Destroying old swapchain");
         device.destroy_swapchain_khr(self.handle, None);
 
         self.image_extent = new_image_extent;
         self.image_views =
             create_image_views(device, new_swapchain, physical_device.surface_format);
         self.handle = new_swapchain;
+
+        trace!("Swapchain recreated successfully");
     }
 
     pub fn handle(&self) -> vk::SwapchainKHR {
@@ -74,19 +84,17 @@ impl Swapchain {
     }
 
     pub unsafe fn framebuffers(
-        &mut self,
+        &self,
         device: &DeviceLoader,
         render_pass: vk::RenderPass,
-    ) -> &[vk::Framebuffer] {
-        match self.framebuffers {
-            Some(_) => self.framebuffers.as_ref().unwrap(),
-            None => {
-                let fbs =
-                    create_framebuffers(device, &self.image_views, render_pass, &self.image_extent);
-                self.framebuffers = Some(fbs);
-                self.framebuffers.as_ref().unwrap()
-            }
+    ) -> Ref<[vk::Framebuffer]> {
+        if self.framebuffers.borrow().is_none() {
+            let fbs =
+                create_framebuffers(device, &self.image_views, render_pass, &self.image_extent);
+            self.framebuffers.replace(Some(fbs));
         }
+
+        Ref::map(self.framebuffers.borrow(), |o| o.as_deref().unwrap())
     }
 
     pub fn image_extent(&self) -> &vk::Extent2D {
@@ -99,11 +107,14 @@ impl Swapchain {
     }
 
     unsafe fn release_dependents(&mut self, device: &DeviceLoader) {
-        if let Some(framebuffers) = &self.framebuffers {
+        if let Some(framebuffers) = self.framebuffers.borrow().deref() {
             for fb in framebuffers {
                 device.destroy_framebuffer(*fb, None);
             }
-            self.framebuffers = None;
+        }
+
+        if self.framebuffers.borrow().is_some() {
+            self.framebuffers.take();
         }
 
         for iv in &self.image_views {
