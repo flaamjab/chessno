@@ -53,10 +53,29 @@ impl Renderer {
     pub fn draw(&mut self, objects: &[Object], camera: &Camera) {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
+
+        trace!("Acquiring swapchain image");
+        let image_index = unsafe {
+            g::acquire_image(
+                &mut self.ctx,
+                self.resources.in_flight_fences[self.frame.number],
+                self.resources.image_available_semaphores[self.frame.number],
+                &mut self.resize_required,
+                &self.new_size,
+            )
+        };
+
+        if image_index.is_none() {
+            return;
+        }
+
+        let image_index = image_index.unwrap();
+
+        trace!("Pushing draw command buffers");
         for o in objects {
-            let mut geometry = Geometry::new();
-            geometry.push_mesh(&o.mesh);
             unsafe {
+                let mut geometry = Geometry::new();
+                geometry.push_mesh(&o.mesh);
                 let (vertex_buf, vertex_mem) = g::create_vertex_buffer(
                     &self.ctx,
                     geometry.vertices(),
@@ -77,9 +96,8 @@ impl Renderer {
                     &self.resources.image_available_semaphores,
                     &self.resources.render_finished_semaphores,
                     self.frame.number,
+                    image_index,
                     &self.resources.cmd_bufs,
-                    &mut self.resize_required,
-                    &self.new_size,
                     self.resources.render_pass,
                     self.resources.pipeline.handle,
                     self.resources.pipeline.layout,
@@ -91,8 +109,6 @@ impl Renderer {
                     &self.resources.uniforms,
                 );
 
-                self.frame.number = (self.frame.number + 1) % FRAMES_IN_FLIGHT;
-
                 self.ctx
                     .device
                     .queue_wait_idle(self.ctx.queues.graphics)
@@ -103,6 +119,17 @@ impl Renderer {
                 self.ctx.device.free_memory(vertex_mem, None);
             }
         }
+
+        trace!("Presenting image");
+        unsafe {
+            g::present(
+                &self.ctx,
+                image_index,
+                self.resources.render_finished_semaphores[self.frame.number],
+            );
+        }
+
+        self.frame.number = (self.frame.number + 1) % FRAMES_IN_FLIGHT;
     }
 
     pub fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {

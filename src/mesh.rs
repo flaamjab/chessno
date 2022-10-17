@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::geometry::Vertex;
 use crate::shader::Shader;
 
+#[derive(Clone)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,

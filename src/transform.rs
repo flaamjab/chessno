@@ -1,7 +1,7 @@
 use cgmath::prelude::*;
 use cgmath::{Deg, Matrix4, Vector3, Vector4};
 
-use crate::camera::{self, Camera};
+use crate::camera::Camera;
 
 #[derive(Debug)]
 #[repr(C, align(16))]
@@ -11,13 +11,13 @@ pub struct Transform {
 
 impl Transform {
     pub fn new(position: Vector3<f32>, rotation: Vector4<f32>, camera: &Camera) -> Self {
-        // let pos = Matrix4::from_translation(position);
-        // let rot = Matrix4::from_axis_angle(rotation.clone().truncate(), Deg(rotation.w));
-        // let model = pos * rot;
-        // let vp = camera.matrix();
+        let pos = Matrix4::from_translation(position);
+        let rot =
+            Matrix4::from_axis_angle(rotation.clone().truncate().normalize(), Deg(rotation.w));
+        let model = pos * rot;
 
         Self {
-            mvp: camera.matrix(),
+            mvp: camera.matrix() * model,
         }
     }
 }

@@ -917,33 +917,21 @@ pub unsafe fn copy_to_gpu(
     device.unmap_memory(dst);
 }
 
-pub unsafe fn draw(
+pub unsafe fn acquire_image(
     ctx: &mut Context,
-    in_flight_fences: &[vk::Fence],
-    image_available_semaphores: &[vk::Semaphore],
-    render_finished_semaphores: &[vk::Semaphore],
-    frame: usize,
-    cmd_bufs: &[vk::CommandBuffer],
+    in_flight_fence: vk::Fence,
+    image_available_semaphore: vk::Semaphore,
     framebuffer_resized: &mut bool,
     window_size: &vk::Extent2D,
-    render_pass: vk::RenderPass,
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    vertex_buffer: vk::Buffer,
-    index_buffer: vk::Buffer,
-    index_count: usize,
-    descriptor_sets: &[vk::DescriptorSet],
-    transform: &Transform,
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-) {
+) -> Option<u32> {
     ctx.device
-        .wait_for_fences(&[in_flight_fences[frame]], true, u64::MAX)
+        .wait_for_fences(&[in_flight_fence], true, u64::MAX)
         .unwrap();
 
     let maybe_image = ctx.device.acquire_next_image_khr(
         ctx.swapchain.handle(),
         u64::MAX,
-        image_available_semaphores[frame],
+        image_available_semaphore,
         vk::Fence::null(),
     );
 
@@ -955,12 +943,32 @@ pub unsafe fn draw(
         trace!("Recreating swapchain");
         ctx.swapchain
             .recreate(&ctx.device, &ctx.physical_device, ctx.surface, &window_size);
-        return;
+        return None;
     } else if maybe_image.raw != vk::Result::SUCCESS {
-        panic!("Failed to acquire image from swapchain, aborting...");
+        panic!("failed to acquire image from swapchain, aborting...");
     }
-    let image_index = maybe_image.value.unwrap();
 
+    maybe_image.value
+}
+
+pub unsafe fn draw(
+    ctx: &mut Context,
+    in_flight_fences: &[vk::Fence],
+    image_available_semaphores: &[vk::Semaphore],
+    render_finished_semaphores: &[vk::Semaphore],
+    frame: usize,
+    image_index: u32,
+    cmd_bufs: &[vk::CommandBuffer],
+    render_pass: vk::RenderPass,
+    pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+    vertex_buffer: vk::Buffer,
+    index_buffer: vk::Buffer,
+    index_count: usize,
+    descriptor_sets: &[vk::DescriptorSet],
+    transform: &Transform,
+    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
+) {
     let buf = cmd_bufs[frame];
     ctx.device
         .reset_command_buffer(buf, CommandBufferResetFlags::empty())
@@ -982,7 +990,6 @@ pub unsafe fn draw(
         descriptor_sets[frame],
         ctx.swapchain.image_extent(),
     );
-
     let wait_semaphores = vec![image_available_semaphores[frame]];
     let command_buffers = vec![buf];
     let signal_semaphores = vec![render_finished_semaphores[frame]];
@@ -997,11 +1004,14 @@ pub unsafe fn draw(
     ctx.device
         .queue_submit(ctx.queues.graphics, &[submit_info], in_flight_fence)
         .unwrap();
+}
 
+pub unsafe fn present(ctx: &Context, image_index: u32, render_finished_semaphore: vk::Semaphore) {
     let swapchains = vec![ctx.swapchain.handle()];
     let image_indices = vec![image_index];
+    let semaphores = [render_finished_semaphore];
     let present_info = vk::PresentInfoKHRBuilder::new()
-        .wait_semaphores(&signal_semaphores)
+        .wait_semaphores(&semaphores)
         .swapchains(&swapchains)
         .image_indices(&image_indices);
 

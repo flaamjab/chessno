@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use camera::Camera;
-use cgmath::{Array, Vector3, Vector4, Zero};
+use cgmath::{Array, EuclideanSpace, Point3, Vector3, Vector4, Zero};
 use renderer::Renderer;
 use winit::{
     dpi::PhysicalSize,
@@ -41,11 +41,19 @@ pub fn linux_main() {
 
     let mut renderer = Renderer::new(TITLE, &window);
     let plane = mesh::new_plane();
-    let mut objects = [Object {
-        mesh: plane,
-        position: Vector3::zero(),
-        rotation: Vector4::new(0.0, -1.0, 0.0, 0.0),
-    }];
+    let up = -Vector4::unit_y();
+    let mut objects = [
+        Object {
+            mesh: plane.clone(),
+            position: Vector3::zero(),
+            rotation: up,
+        },
+        Object {
+            mesh: plane,
+            position: Vector3::new(1.0, 1.0, 1.0),
+            rotation: up,
+        },
+    ];
 
     let rotation_speed = 10.0f32;
     let mut rotation_angle = 0.0;
@@ -71,10 +79,11 @@ pub fn linux_main() {
             delta = cur_time.duration_since(prev_time).as_secs_f32();
             prev_time = cur_time;
 
-            let view = Vector3::new(0.0, 0.0, 2.0);
+            let camera_pos = Point3::new(2.0, 2.0, 1.0);
+            let camera_dir = -camera_pos.to_vec();
             let PhysicalSize { width, height } = window.inner_size();
             let projection = camera::perspective(45.0, width as f32 / height as f32, 0.1, 100.0);
-            let camera = Camera::new(&view, &Vector4::from_value(0.0), &projection);
+            let camera = Camera::new(&camera_pos, &camera_dir, &projection);
 
             objects[0].rotation.w = rotation_angle;
             renderer.draw(&objects, &camera);

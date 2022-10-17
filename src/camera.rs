@@ -1,39 +1,38 @@
-use cgmath::{Angle, Deg, InnerSpace, Matrix, Matrix4, Rad, SquareMatrix, Vector3, Vector4, Zero};
+use cgmath::{
+    Angle, Array, Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, Rad, SquareMatrix,
+    Vector3, Vector4,
+};
+
+use crate::logging::trace;
 
 const TOLERANCE: f32 = 1e-4;
 
 pub struct Camera {
-    position: Vector3<f32>,
-    rotation: Vector4<f32>,
+    position: Point3<f32>,
+    direction: Vector3<f32>,
     projection: Matrix4<f32>,
 }
 
 impl Camera {
     pub fn new(
-        position: &Vector3<f32>,
-        rotation: &Vector4<f32>,
+        position: &Point3<f32>,
+        direction: &Vector3<f32>,
         projection: &Matrix4<f32>,
     ) -> Self {
         Self {
             position: *position,
-            rotation: *rotation,
+            direction: *direction,
             projection: *projection,
         }
     }
 
     pub fn matrix(&self) -> Matrix4<f32> {
-        // let mut result = Matrix4::identity();
-        // if self.rotation.w < TOLERANCE {
-        //     let axis = self.rotation.clone().truncate().normalize();
-        //     let rot = Matrix4::from_axis_angle(axis, Deg(self.rotation.w));
-        //     result = rot * result;
-        // }
-
-        // let translate = Matrix4::from_translation(self.position);
-        // self.projection * translate * result
-
-        let translate = Matrix4::from_translation(Vector3::new(0.0, 0.0, 2.0));
-        self.projection * translate
+        let view = Matrix4::look_at_rh(
+            self.position,
+            self.position + self.direction,
+            Vector3::unit_y(),
+        );
+        self.projection * view
     }
 }
 
