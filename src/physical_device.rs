@@ -3,6 +3,8 @@ use std::os::raw::c_char;
 
 use erupt::{vk, InstanceLoader};
 
+use crate::context::Context;
+
 #[derive(Clone)]
 pub struct PhysicalDevice {
     pub handle: vk::PhysicalDevice,
@@ -119,4 +121,54 @@ impl PhysicalDevice {
             )
             .expect("No suitable physical device found")
     }
+}
+
+fn has_stencil_component(format: vk::Format) -> bool {
+    format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D32_SFLOAT_S8_UINT
+}
+
+pub unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
+    find_supported_format(
+        ctx,
+        &[
+            vk::Format::D32_SFLOAT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ],
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+    )
+}
+
+pub unsafe fn find_supported_format(
+    ctx: &Context,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Option<vk::Format> {
+    candidates
+        .iter()
+        .find(|&format| {
+            let props = ctx
+                .instance
+                .get_physical_device_format_properties(ctx.physical_device.handle, *format);
+
+            let mut format_suitable = false;
+            match tiling {
+                vk::ImageTiling::LINEAR => {
+                    if (props.linear_tiling_features & features) == features {
+                        format_suitable = true;
+                    }
+                }
+                vk::ImageTiling::OPTIMAL => {
+                    if (props.optimal_tiling_features & features) == features {
+                        format_suitable = true;
+                    }
+                }
+                _ => {}
+            }
+
+            format_suitable
+        })
+        .map(|&f| f)
 }

@@ -1,31 +1,15 @@
-use std::io;
-use std::mem::{size_of, size_of_val};
-use std::path::Path;
-use std::ptr;
-use std::{ffi::c_void, sync::Arc};
+use std::ffi::c_void;
+use std::mem::size_of;
 
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
-use image::io::Reader as ImageReader;
-use image::EncodableLayout;
 use memoffset::offset_of;
-use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
 
 use crate::context::Context;
 use crate::geometry::Vertex;
-use crate::gpu_program::Shader;
 use crate::logging::trace;
+use crate::memory;
 use crate::transform::Transform;
-
-impl Transform {
-    fn binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
-        vk::DescriptorSetLayoutBindingBuilder::new()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-    }
-}
 
 impl Vertex {
     fn binding_desc<'a>() -> vk::VertexInputBindingDescriptionBuilder<'a> {
@@ -146,8 +130,15 @@ pub unsafe fn create_pipeline(
         .logic_op_enable(false)
         .attachments(&color_blend_attachments);
 
-    let pipeline_layout_info =
-        vk::PipelineLayoutCreateInfoBuilder::new().set_layouts(&descriptor_set_layouts);
+    let push_constant_range = vk::PushConstantRangeBuilder::new()
+        .offset(0)
+        .size(size_of::<Transform>() as _)
+        .stage_flags(vk::ShaderStageFlags::VERTEX);
+    let push_constant_ranges = [push_constant_range];
+
+    let pipeline_layout_info = vk::PipelineLayoutCreateInfoBuilder::new()
+        .set_layouts(&descriptor_set_layouts)
+        .push_constant_ranges(&push_constant_ranges);
     let pipeline_layout = ctx
         .device
         .create_pipeline_layout(&pipeline_layout_info, None)
@@ -179,18 +170,27 @@ pub unsafe fn create_pipeline(
 
 pub unsafe fn setup_draw_state(
     device: &DeviceLoader,
+    cmd_buf: vk::CommandBuffer,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
-    cmd_buf: vk::CommandBuffer,
-    index_count: usize,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     descriptor_set: vk::DescriptorSet,
+    push_constant: &Transform,
 ) {
     device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
     device.cmd_bind_vertex_buffers(cmd_buf, 0, &[vertex_buffer], &[0]);
     device.cmd_bind_index_buffer(cmd_buf, index_buffer, 0, vk::IndexType::UINT16);
+
+    device.cmd_push_constants(
+        cmd_buf,
+        pipeline_layout,
+        vk::ShaderStageFlags::VERTEX,
+        0,
+        size_of::<Transform>() as _,
+        push_constant as *const Transform as *const c_void,
+    );
 
     device.cmd_bind_descriptor_sets(
         cmd_buf,
@@ -200,551 +200,6 @@ pub unsafe fn setup_draw_state(
         &[descriptor_set],
         &[],
     );
-}
-
-pub unsafe fn allocate_buffer(
-    ctx: &Context,
-    size: usize,
-    usage: vk::BufferUsageFlags,
-    properties: vk::MemoryPropertyFlags,
-) -> (vk::Buffer, vk::DeviceMemory) {
-    let buffer_info = vk::BufferCreateInfoBuilder::new()
-        .size(size as vk::DeviceSize)
-        .usage(usage)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-
-    let buffer = ctx
-        .device
-        .create_buffer(&buffer_info, None)
-        .expect("Failed to create buffer");
-
-    let mem_reqs = ctx.device.get_buffer_memory_requirements(buffer);
-    let mem_type = find_memory_type(ctx, mem_reqs.memory_type_bits, properties);
-
-    let allocate_info = vk::MemoryAllocateInfoBuilder::new()
-        .allocation_size(mem_reqs.size)
-        .memory_type_index(mem_type);
-    let buffer_memory = ctx
-        .device
-        .allocate_memory(&allocate_info, None)
-        .expect("Failed to allocate memory for vertex buffer");
-
-    ctx.device
-        .bind_buffer_memory(buffer, buffer_memory, 0)
-        .expect("Failed to bind memory");
-
-    (buffer, buffer_memory)
-}
-
-pub unsafe fn create_vertex_buffer(
-    ctx: &Context,
-    vertices: &[Vertex],
-    copy_queue_family: u32,
-    copy_queue: vk::Queue,
-) -> (vk::Buffer, vk::DeviceMemory) {
-    let size = size_of_val(&vertices[0]) * vertices.len();
-    let (staging_buf, staging_mem) = allocate_buffer(
-        ctx,
-        size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-    );
-
-    copy_to_gpu(
-        &ctx.device,
-        vertices.as_ptr() as *const c_void,
-        staging_mem,
-        size,
-    );
-
-    let (vertex_buf, vertex_mem) = allocate_buffer(
-        ctx,
-        size,
-        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    );
-
-    copy_buffer(
-        ctx,
-        vertex_buf,
-        staging_buf,
-        size,
-        copy_queue_family,
-        copy_queue,
-    );
-
-    ctx.device.destroy_buffer(staging_buf, None);
-    ctx.device.free_memory(staging_mem, None);
-
-    (vertex_buf, vertex_mem)
-}
-
-pub unsafe fn copy_buffer_to_image(
-    device: &DeviceLoader,
-    buffer: vk::Buffer,
-    image: vk::Image,
-    size: (u32, u32),
-    copy_queue: vk::Queue,
-    copy_queue_family: u32,
-) {
-    let (cmd_buf, cmd_pool) = begin_once_commands(device, copy_queue_family);
-
-    let region = vk::BufferImageCopyBuilder::new()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(vk::ImageSubresourceLayers {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_level: 0,
-            base_array_layer: 0,
-            layer_count: 1,
-        })
-        .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-        .image_extent(vk::Extent3D {
-            width: size.0,
-            height: size.1,
-            depth: 1,
-        });
-
-    device.cmd_copy_buffer_to_image(
-        cmd_buf,
-        buffer,
-        image,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        &[region],
-    );
-
-    end_once_commands(device, cmd_pool, cmd_buf, copy_queue)
-}
-
-pub unsafe fn copy_buffer(
-    ctx: &Context,
-    dst_buf: vk::Buffer,
-    src_buf: vk::Buffer,
-    size: usize,
-    copy_queue_family: u32,
-    copy_queue: vk::Queue,
-) {
-    let (cmd_buf, cmd_pool) = begin_once_commands(&ctx.device, copy_queue_family);
-
-    let copy_region = vk::BufferCopyBuilder::new().size(size as vk::DeviceSize);
-
-    ctx.device
-        .cmd_copy_buffer(cmd_buf, src_buf, dst_buf, &[copy_region]);
-
-    end_once_commands(&ctx.device, cmd_pool, cmd_buf, copy_queue);
-}
-
-pub unsafe fn create_index_buffer(
-    ctx: &Context,
-    indices: &[u16],
-    copy_queue_family: u32,
-    copy_queue: vk::Queue,
-) -> (vk::Buffer, vk::DeviceMemory) {
-    let buf_size = size_of_val(&indices[0]) * indices.len();
-
-    let (staging_buf, staging_mem) = allocate_buffer(
-        ctx,
-        buf_size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
-    );
-
-    copy_to_gpu(
-        &ctx.device,
-        indices.as_ptr() as *const c_void,
-        staging_mem,
-        buf_size,
-    );
-
-    let (index_buf, index_mem) = allocate_buffer(
-        ctx,
-        buf_size,
-        vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    );
-
-    copy_buffer(
-        ctx,
-        index_buf,
-        staging_buf,
-        buf_size,
-        copy_queue_family,
-        copy_queue,
-    );
-
-    ctx.device.destroy_buffer(staging_buf, None);
-    ctx.device.free_memory(staging_mem, None);
-
-    (index_buf, index_mem)
-}
-
-pub unsafe fn find_memory_type(
-    ctx: &Context,
-    type_filter: u32,
-    properties: vk::MemoryPropertyFlags,
-) -> u32 {
-    let mem_properties = ctx
-        .instance
-        .get_physical_device_memory_properties(ctx.physical_device.handle);
-
-    for (ix, mem_type) in mem_properties.memory_types.iter().enumerate() {
-        if type_filter & (1 << ix) != 0 && (properties & mem_type.property_flags) == properties {
-            return ix as u32;
-        }
-    }
-
-    panic!("Failed to find suitable memory type");
-}
-
-pub unsafe fn create_uniform_buffers(
-    ctx: &Context,
-    frames_in_flight: usize,
-) -> SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]> {
-    let buf_size = size_of::<Transform>();
-    (0..frames_in_flight)
-        .map(|_| {
-            allocate_buffer(
-                ctx,
-                buf_size,
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )
-        })
-        .collect()
-}
-
-pub unsafe fn upload_uniform_buffers(
-    device: &DeviceLoader,
-    transform: &Transform,
-    uniform_mem: vk::DeviceMemory,
-) {
-    let size = size_of_val(transform);
-    let data = device
-        .map_memory(uniform_mem, 0, size as u64, vk::MemoryMapFlags::empty())
-        .unwrap();
-
-    std::ptr::copy_nonoverlapping(transform as *const Transform as *const c_void, data, size);
-
-    device.unmap_memory(uniform_mem);
-}
-
-pub unsafe fn create_descriptor_set_layout(ctx: &Context) -> vk::DescriptorSetLayout {
-    let transform_binding = Transform::binding();
-    let sampler_binding = create_sampler_binding();
-    let bindings = [transform_binding, sampler_binding];
-
-    let layout_info = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&bindings);
-
-    let descriptor_set_layout = ctx
-        .device
-        .create_descriptor_set_layout(&layout_info, None)
-        .expect("failed to create descriptor set layout");
-
-    descriptor_set_layout
-}
-
-fn create_sampler_binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
-    vk::DescriptorSetLayoutBindingBuilder::new()
-        .binding(1)
-        .descriptor_count(1)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-}
-
-pub unsafe fn create_descriptor_pool(
-    device: &Arc<DeviceLoader>,
-    frames_in_flight: usize,
-) -> vk::DescriptorPool {
-    let pool_sizes = [
-        vk::DescriptorPoolSizeBuilder::new()
-            ._type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(frames_in_flight as u32),
-        vk::DescriptorPoolSizeBuilder::new()
-            ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(frames_in_flight as u32),
-    ];
-    let pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
-        .pool_sizes(&pool_sizes)
-        .max_sets(frames_in_flight as u32);
-
-    device
-        .create_descriptor_pool(&pool_info, None)
-        .expect("Failed to create a descriptor pool")
-}
-
-pub unsafe fn create_descriptor_sets(
-    device: &Arc<DeviceLoader>,
-    pool: vk::DescriptorPool,
-    layouts: &[vk::DescriptorSetLayout],
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    texture: (vk::ImageView, vk::Sampler),
-    frames_in_flight: usize,
-) -> Vec<vk::DescriptorSet> {
-    let alloc_info = vk::DescriptorSetAllocateInfoBuilder::new()
-        .descriptor_pool(pool)
-        .set_layouts(layouts);
-
-    let descriptor_sets = device
-        .allocate_descriptor_sets(&alloc_info)
-        .expect("failed to allocate descriptor sets")
-        .to_vec();
-
-    for ix in 0..frames_in_flight {
-        let buffer_info = vk::DescriptorBufferInfoBuilder::new()
-            .buffer(uniforms[ix].0)
-            .offset(0)
-            .range(size_of::<Transform>() as u64);
-
-        let image_info = vk::DescriptorImageInfoBuilder::new()
-            .image_view(texture.0)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .sampler(texture.1);
-
-        let buffer_infos = [buffer_info];
-        let image_infos = [image_info];
-
-        let uniform_dw = vk::WriteDescriptorSetBuilder::new()
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .dst_set(descriptor_sets[ix])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .buffer_info(&buffer_infos);
-
-        let combined_sampler_dw = vk::WriteDescriptorSetBuilder::new()
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .dst_set(descriptor_sets[ix])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .image_info(&image_infos);
-
-        device.update_descriptor_sets(&[uniform_dw, combined_sampler_dw], &[]);
-    }
-
-    descriptor_sets
-}
-
-fn has_stencil_component(format: vk::Format) -> bool {
-    format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D32_SFLOAT_S8_UINT
-}
-
-pub unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
-    find_supported_format(
-        ctx,
-        &[
-            vk::Format::D32_SFLOAT,
-            vk::Format::D32_SFLOAT_S8_UINT,
-            vk::Format::D24_UNORM_S8_UINT,
-        ],
-        vk::ImageTiling::OPTIMAL,
-        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
-    )
-}
-
-pub unsafe fn find_supported_format(
-    ctx: &Context,
-    candidates: &[vk::Format],
-    tiling: vk::ImageTiling,
-    features: vk::FormatFeatureFlags,
-) -> Option<vk::Format> {
-    candidates
-        .iter()
-        .find(|&format| {
-            let props = ctx
-                .instance
-                .get_physical_device_format_properties(ctx.physical_device.handle, *format);
-
-            let mut format_suitable = false;
-            match tiling {
-                vk::ImageTiling::LINEAR => {
-                    if (props.linear_tiling_features & features) == features {
-                        format_suitable = true;
-                    }
-                }
-                vk::ImageTiling::OPTIMAL => {
-                    if (props.optimal_tiling_features & features) == features {
-                        format_suitable = true;
-                    }
-                }
-                _ => {}
-            }
-
-            format_suitable
-        })
-        .map(|&f| f)
-}
-
-pub unsafe fn create_texture(
-    ctx: &Context,
-    path: &Path,
-    copy_queue: vk::Queue,
-    copy_queue_family: u32,
-) -> io::Result<(vk::Image, vk::DeviceMemory)> {
-    let image = ImageReader::open(path)?
-        .decode()
-        .expect("failed to decode image at {:path}");
-    let image = image.as_rgba8().expect("image was not in RGBA8 format");
-    let image_size = image.as_bytes().len();
-
-    let (staging_buf, staging_mem) = allocate_buffer(
-        ctx,
-        image_size,
-        vk::BufferUsageFlags::TRANSFER_SRC,
-        vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-    );
-
-    copy_to_gpu(
-        &ctx.device,
-        image.as_bytes().as_ptr() as *const c_void,
-        staging_mem,
-        image_size,
-    );
-
-    let (texture, texture_mem) = create_image(
-        &ctx,
-        image.width(),
-        image.height(),
-        vk::Format::R8G8B8A8_SRGB,
-        vk::ImageTiling::OPTIMAL,
-        vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    );
-
-    transition_image_layout(
-        &ctx.device,
-        texture,
-        vk::Format::R8G8B8A8_SRGB,
-        vk::ImageLayout::UNDEFINED,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        copy_queue_family,
-        copy_queue,
-    );
-
-    copy_buffer_to_image(
-        &ctx.device,
-        staging_buf,
-        texture,
-        (image.width(), image.height()),
-        copy_queue,
-        copy_queue_family,
-    );
-
-    transition_image_layout(
-        &ctx.device,
-        texture,
-        vk::Format::R8G8B8A8_SNORM,
-        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        copy_queue_family,
-        copy_queue,
-    );
-
-    ctx.device.destroy_buffer(staging_buf, None);
-    ctx.device.free_memory(staging_mem, None);
-
-    Ok((texture, texture_mem))
-}
-
-pub unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::ImageView {
-    let image_view_info = vk::ImageViewCreateInfoBuilder::new()
-        .image(texture)
-        .view_type(vk::ImageViewType::_2D)
-        .format(vk::Format::R8G8B8A8_SRGB)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-
-    device
-        .create_image_view(&image_view_info, None)
-        .expect("failed to create texture view")
-}
-
-pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
-    let max_anisotropy = ctx.physical_device.properties.limits.max_sampler_anisotropy;
-    let info = vk::SamplerCreateInfoBuilder::new()
-        .mag_filter(vk::Filter::LINEAR)
-        .min_filter(vk::Filter::NEAREST)
-        .address_mode_u(vk::SamplerAddressMode::REPEAT)
-        .address_mode_v(vk::SamplerAddressMode::REPEAT)
-        .address_mode_w(vk::SamplerAddressMode::REPEAT)
-        .anisotropy_enable(true)
-        .max_anisotropy(max_anisotropy)
-        .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
-        .unnormalized_coordinates(false)
-        .compare_enable(false)
-        .compare_op(vk::CompareOp::ALWAYS)
-        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-        .mip_lod_bias(0.0)
-        .min_lod(0.0)
-        .max_lod(0.0);
-
-    ctx.device
-        .create_sampler(&info, None)
-        .expect("failed to create a texture sampler")
-}
-
-pub unsafe fn transition_image_layout(
-    device: &DeviceLoader,
-    image: vk::Image,
-    format: vk::Format,
-    old_layout: vk::ImageLayout,
-    new_layout: vk::ImageLayout,
-    copy_queue_family: u32,
-    copy_queue: vk::Queue,
-) {
-    let (cmd_buf, cmd_pool) = begin_once_commands(device, copy_queue_family);
-
-    let mut barrier = vk::ImageMemoryBarrierBuilder::new()
-        .old_layout(old_layout)
-        .new_layout(new_layout)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-
-    let source_stage;
-    let destination_stage;
-    match (old_layout, new_layout) {
-        (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL) => {
-            barrier = barrier
-                .src_access_mask(vk::AccessFlags::empty())
-                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE);
-
-            source_stage = vk::PipelineStageFlags::TOP_OF_PIPE;
-            destination_stage = vk::PipelineStageFlags::TRANSFER;
-        }
-        (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => {
-            barrier = barrier
-                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ);
-
-            source_stage = vk::PipelineStageFlags::TRANSFER;
-            destination_stage = vk::PipelineStageFlags::FRAGMENT_SHADER;
-        }
-        _ => panic!("unsupported layout transition"),
-    }
-
-    device.cmd_pipeline_barrier(
-        cmd_buf,
-        source_stage,
-        destination_stage,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[barrier],
-    );
-
-    end_once_commands(device, cmd_pool, cmd_buf, copy_queue);
 }
 
 pub unsafe fn begin_once_commands(
@@ -806,66 +261,6 @@ pub unsafe fn create_transient_command_pool(
     device
         .create_command_pool(&command_pool_ci, None)
         .expect("Failed to create transient command pool for staging buffer transfer")
-}
-
-pub unsafe fn create_image(
-    ctx: &Context,
-    width: u32,
-    height: u32,
-    format: vk::Format,
-    tiling: vk::ImageTiling,
-    usage: vk::ImageUsageFlags,
-    properties: vk::MemoryPropertyFlags,
-) -> (vk::Image, vk::DeviceMemory) {
-    let image_info = vk::ImageCreateInfoBuilder::new()
-        .image_type(vk::ImageType::_2D)
-        .extent(vk::Extent3D {
-            width,
-            height,
-            depth: 1,
-        })
-        .mip_levels(1)
-        .array_layers(1)
-        .format(format)
-        .tiling(tiling)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .usage(usage)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .samples(vk::SampleCountFlagBits::_1)
-        .flags(vk::ImageCreateFlags::empty());
-
-    let device = &ctx.device;
-    let image = device
-        .create_image(&image_info, None)
-        .expect("failed to create texture image");
-
-    let mem_reqs = device.get_image_memory_requirements(image);
-    let mem_type_index = find_memory_type(ctx, mem_reqs.memory_type_bits, properties);
-    let alloc_info = vk::MemoryAllocateInfoBuilder::new()
-        .allocation_size(mem_reqs.size)
-        .memory_type_index(mem_type_index);
-
-    let mem = device
-        .allocate_memory(&alloc_info, None)
-        .expect("failed to allocate memory");
-    device
-        .bind_image_memory(image, mem, 0)
-        .expect("failed to bind image memory");
-
-    (image, mem)
-}
-
-pub unsafe fn copy_to_gpu(
-    device: &DeviceLoader,
-    src: *const c_void,
-    dst: vk::DeviceMemory,
-    size: usize,
-) {
-    let data = device
-        .map_memory(dst, 0, size as vk::DeviceSize, vk::MemoryMapFlags::empty())
-        .expect("failed to map memory");
-    ptr::copy_nonoverlapping(src, data, size as usize);
-    device.unmap_memory(dst);
 }
 
 pub unsafe fn acquire_image(
@@ -955,7 +350,7 @@ pub unsafe fn begin_draw(
     device.cmd_set_scissor(cmd_buf, 0, &[scissor]);
 }
 
-pub unsafe fn draw_mesh(
+pub unsafe fn draw(
     device: &DeviceLoader,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
@@ -967,16 +362,16 @@ pub unsafe fn draw_mesh(
     descriptor_set: vk::DescriptorSet,
     uniform_mem: vk::DeviceMemory,
 ) {
-    upload_uniform_buffers(&device, &transform, uniform_mem);
+    // memory::upload_uniform_buffers(&device, &transform, uniform_mem);
     setup_draw_state(
         &device,
+        cmd_buf,
         pipeline,
         pipeline_layout,
-        cmd_buf,
-        index_count,
         vertex_buffer,
         index_buffer,
         descriptor_set,
+        &transform,
     );
     device.cmd_draw_indexed(cmd_buf, index_count as u32, 1, 0, 0, 0);
 }
@@ -1020,52 +415,4 @@ pub unsafe fn present(ctx: &Context, image_index: u32, render_finished_semaphore
     ctx.device
         .queue_present_khr(ctx.queues.graphics, &present_info)
         .unwrap();
-}
-
-pub unsafe fn release_resources(
-    ctx: &mut Context,
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    shader: &Shader,
-    descriptor_pool: vk::DescriptorPool,
-    command_pool: vk::CommandPool,
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    descriptor_set_layout: vk::DescriptorSetLayout,
-    render_pass: vk::RenderPass,
-    texture: vk::Image,
-    texture_mem: vk::DeviceMemory,
-    texture_view: vk::ImageView,
-    sampler: vk::Sampler,
-) {
-    ctx.device.device_wait_idle().unwrap();
-
-    ctx.device.destroy_sampler(sampler, None);
-    ctx.device.destroy_image_view(texture_view, None);
-    ctx.device.destroy_image(texture, None);
-    ctx.device.free_memory(texture_mem, None);
-
-    for (b, m) in uniforms {
-        ctx.device.destroy_buffer(*b, None);
-        ctx.device.free_memory(*m, None);
-    }
-
-    shader.destroy(&ctx.device);
-
-    ctx.device.destroy_descriptor_pool(descriptor_pool, None);
-
-    ctx.device.destroy_command_pool(command_pool, None);
-
-    ctx.device.destroy_pipeline(pipeline, None);
-
-    ctx.device.destroy_render_pass(render_pass, None);
-
-    ctx.device.destroy_pipeline_layout(pipeline_layout, None);
-
-    ctx.device
-        .destroy_descriptor_set_layout(descriptor_set_layout, None);
-}
-
-pub fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
-    let PhysicalSize { width, height } = size;
-    width as f32 / height as f32
 }

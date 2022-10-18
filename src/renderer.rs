@@ -1,3 +1,4 @@
+use std::mem::size_of;
 use std::path::Path;
 
 use erupt::vk;
@@ -11,8 +12,10 @@ use crate::g;
 use crate::geometry::Geometry;
 use crate::gpu_program::Shader;
 use crate::logging::trace;
+use crate::memory;
 use crate::object::Object;
 use crate::sync_pool::SyncPool;
+use crate::texture;
 use crate::transform::Transform;
 
 const SHADER_VERT: &[u8] = include_bytes!("../shaders/unlit.vert.spv");
@@ -85,20 +88,20 @@ impl Renderer {
             );
         }
 
-        let mut free_queue = Vec::new();
+        let mut free_queue = Vec::with_capacity(objects.len());
         for o in objects {
             unsafe {
                 let mut geometry = Geometry::new();
                 geometry.push_mesh(&o.mesh);
 
-                let (vertex_buf, vertex_mem) = g::create_vertex_buffer(
+                let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
                     &self.ctx,
                     geometry.vertices(),
                     copy_queue_family,
                     copy_queue,
                 );
 
-                let (index_buf, index_mem) = g::create_index_buffer(
+                let (index_buf, index_mem) = memory::create_index_buffer(
                     &self.ctx,
                     geometry.indices(),
                     copy_queue_family,
@@ -109,7 +112,7 @@ impl Renderer {
                 free_queue.push((index_buf, index_mem));
 
                 let transform = Transform::new(o.position, o.rotation, camera);
-                g::draw_mesh(
+                g::draw(
                     &self.ctx.device,
                     self.resources.pipeline.handle,
                     self.resources.pipeline.layout,
@@ -221,29 +224,30 @@ impl Resources {
         unsafe {
             let render_pass = g::create_render_pass(&ctx);
 
-            let uniforms = g::create_uniform_buffers(&ctx, FRAMES_IN_FLIGHT);
-            let descriptor_pool = g::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
+            let uniforms =
+                memory::create_uniform_buffers(&ctx, size_of::<Transform>(), FRAMES_IN_FLIGHT);
+            let descriptor_pool = memory::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
             let path = Path::new("./assets/textures/happy-tree.png");
-            let (texture, texture_mem) = g::create_texture(
+            let (texture, texture_mem) = texture::create_texture(
                 &ctx,
                 &path,
                 ctx.queues.graphics,
                 ctx.physical_device.queue_families.graphics,
             )
             .expect("failed to create texture");
-            let texture_view = g::create_texture_view(&ctx.device, texture);
+            let texture_view = texture::create_texture_view(&ctx.device, texture);
             let texture = Texture {
                 memory: texture_mem,
                 image: texture,
                 image_view: texture_view,
             };
-            let sampler = g::create_sampler(&ctx);
+            let sampler = texture::create_sampler(&ctx);
 
-            let descriptor_set_layout = g::create_descriptor_set_layout(&ctx);
+            let descriptor_set_layout = memory::create_descriptor_set_layout(&ctx);
             let descriptor_set_layouts = [descriptor_set_layout; 2];
 
-            let descriptor_sets = g::create_descriptor_sets(
+            let descriptor_sets = memory::create_descriptor_sets(
                 &ctx.device,
                 descriptor_pool,
                 &descriptor_set_layouts,
@@ -323,7 +327,7 @@ impl Resources {
             ctx.device.destroy_fence(*fence, None);
         }
 
-        g::release_resources(
+        memory::release_resources(
             ctx,
             &self.uniforms,
             &self.shader,

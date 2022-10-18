@@ -19,12 +19,14 @@ mod g;
 mod geometry;
 mod gpu_program;
 mod logging;
+mod memory;
 mod mesh;
 mod object;
 mod physical_device;
 mod renderer;
 mod swapchain;
 mod sync_pool;
+mod texture;
 mod transform;
 #[cfg(debug_assertions)]
 mod validation;
@@ -45,14 +47,14 @@ pub fn linux_main() {
     let mut objects = [
         Object {
             mesh: plane.clone(),
+            position: Vector3::new(1.0, 1.0, 0.0),
+            rotation: up,
+        },
+        Object {
+            mesh: plane.clone(),
             position: Vector3::zero(),
             rotation: up,
         },
-        // Object {
-        //     mesh: plane,
-        //     position: Vector3::new(1.0, 1.0, 1.0),
-        //     rotation: up,
-        // },
     ];
 
     let rotation_speed = 10.0f32;
@@ -79,13 +81,15 @@ pub fn linux_main() {
             delta = cur_time.duration_since(prev_time).as_secs_f32();
             prev_time = cur_time;
 
-            let camera_pos = Point3::new(2.0, 2.0, 1.0);
+            let camera_pos = Point3::new(0.0, -2.0, 1.0);
             let camera_dir = -camera_pos.to_vec();
-            let PhysicalSize { width, height } = window.inner_size();
-            let projection = camera::perspective(45.0, width as f32 / height as f32, 0.1, 100.0);
+            let projection =
+                camera::perspective(45.0, aspect_ratio(window.inner_size()), 0.1, 100.0);
             let camera = Camera::new(&camera_pos, &camera_dir, &projection);
 
-            objects[0].rotation.w = rotation_angle;
+            for (n, ob) in objects.iter_mut().enumerate() {
+                ob.rotation.w = rotation_angle + 10.0 * n as f32;
+            }
             renderer.draw(&objects, &camera);
         }
         _ => {}
@@ -107,4 +111,9 @@ pub fn android_main() {
             _ => {}
         })
     }
+}
+
+pub fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
+    let PhysicalSize { width, height } = size;
+    width as f32 / height as f32
 }
