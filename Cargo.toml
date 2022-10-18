@@ -15,6 +15,7 @@ erupt = "0.22.0"
 thiserror = "1.0"
 smallvec = "1.10"
 memoffset = "0.6.5"
+obj = "0.10.2"
 
 [lib]
 crate-type = ["lib", "cdylib"]

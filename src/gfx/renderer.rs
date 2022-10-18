@@ -10,13 +10,14 @@ use crate::camera::Camera;
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::geometry::Geometry;
-use crate::gfx::gpu_program::GpuProgram;
 use crate::gfx::memory;
+use crate::gfx::shader::Shader;
+use crate::gfx::spatial::Spatial;
 use crate::gfx::sync_pool::SyncPool;
 use crate::gfx::texture;
-use crate::gfx::transform::Transform;
 use crate::logging::trace;
 use crate::object::Object;
+use crate::transform::Transform;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
 const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
@@ -26,30 +27,54 @@ const FRAMES_IN_FLIGHT: usize = 2;
 pub struct Renderer {
     ctx: Context,
     sync_pool: SyncPool,
-    frame: Frame,
+    frames_in_flight: SmallVec<[Frame; FRAMES_IN_FLIGHT]>,
+    frame_number: usize,
     resources: Resources,
     resize_required: bool,
+    cmd_pool: vk::CommandPool,
     new_size: vk::Extent2D,
 }
 
+#[derive(Clone)]
 struct Frame {
-    number: usize,
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
+    in_flight_fence: vk::Fence,
+    cmd_buf: vk::CommandBuffer,
 }
 
 impl Renderer {
     pub fn new(app_name: &str, window: &Window) -> Self {
         let ctx = Context::new(window, app_name, "No Engine");
-        let frame = Frame { number: 0 };
         let mut sync_pool = SyncPool::new();
-        let resources = Resources::new(&ctx, &mut sync_pool);
+        unsafe {
+            let cmd_pool = memory::create_command_pool(
+                &ctx.device,
+                ctx.physical_device.queue_families.graphics,
+            );
+            let cmd_bufs = memory::create_command_buffers(&ctx.device, cmd_pool, FRAMES_IN_FLIGHT);
 
-        Self {
-            ctx,
-            sync_pool,
-            frame,
-            resources,
-            resize_required: false,
-            new_size: vk::Extent2D::default(),
+            let frames_in_flight = (0..FRAMES_IN_FLIGHT)
+                .map(|n| Frame {
+                    image_available_semaphore: sync_pool.semaphore(&ctx.device),
+                    render_finished_semaphore: sync_pool.semaphore(&ctx.device),
+                    in_flight_fence: sync_pool.fence(&ctx.device, true),
+                    cmd_buf: cmd_bufs[n],
+                })
+                .collect();
+
+            let resources = Resources::new(&ctx);
+
+            Self {
+                ctx,
+                sync_pool,
+                cmd_pool,
+                frames_in_flight,
+                frame_number: 0,
+                resources,
+                resize_required: false,
+                new_size: vk::Extent2D::default(),
+            }
         }
     }
 
@@ -57,11 +82,12 @@ impl Renderer {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
 
+        let current_frame = self.current_frame().clone();
         let image_index = unsafe {
             g::acquire_image(
                 &mut self.ctx,
-                self.resources.in_flight_fences[self.frame.number],
-                self.resources.image_available_semaphores[self.frame.number],
+                current_frame.in_flight_fence,
+                current_frame.image_available_semaphore,
                 &mut self.resize_required,
                 &self.new_size,
             )
@@ -72,7 +98,6 @@ impl Renderer {
         }
 
         let image_index = image_index.unwrap();
-        let cmd_buf = self.resources.cmd_bufs[self.frame.number];
 
         unsafe {
             let framebuffers = self
@@ -81,7 +106,7 @@ impl Renderer {
                 .framebuffers(&self.ctx.device, self.resources.render_pass);
             g::begin_draw(
                 &self.ctx.device,
-                cmd_buf,
+                current_frame.cmd_buf,
                 self.resources.render_pass,
                 framebuffers[image_index as usize],
                 self.ctx.swapchain.image_extent(),
@@ -111,40 +136,39 @@ impl Renderer {
                 free_queue.push((vertex_buf, vertex_mem));
                 free_queue.push((index_buf, index_mem));
 
-                let transform = Transform::new(o.position, o.rotation, camera);
+                let mvp = Spatial(camera.matrix() * o.transform.matrix());
                 g::draw(
                     &self.ctx.device,
                     self.resources.pipeline.handle,
                     self.resources.pipeline.layout,
-                    cmd_buf,
+                    current_frame.cmd_buf,
                     vertex_buf,
                     index_buf,
                     geometry.indices().len(),
-                    &transform,
-                    self.resources.descriptor_sets[self.frame.number],
-                    self.resources.uniforms[self.frame.number].1,
+                    &mvp,
+                    self.resources.descriptor_sets[self.frame_number],
+                    self.resources.uniforms[self.frame_number].1,
                 );
             }
         }
 
         unsafe {
             // End draw
-            let image_available_semaphore =
-                self.resources.image_available_semaphores[self.frame.number];
-            let render_finished_semaphore =
-                self.resources.render_finished_semaphores[self.frame.number];
-            let in_flight_fence = self.resources.in_flight_fences[self.frame.number];
             g::end_draw(
                 &self.ctx.device,
                 self.ctx.queues.graphics,
-                cmd_buf,
-                image_available_semaphore,
-                render_finished_semaphore,
-                in_flight_fence,
+                current_frame.cmd_buf,
+                current_frame.image_available_semaphore,
+                current_frame.render_finished_semaphore,
+                current_frame.in_flight_fence,
             );
 
             // Present
-            g::present(&self.ctx, image_index, render_finished_semaphore);
+            g::present(
+                &self.ctx,
+                image_index,
+                current_frame.render_finished_semaphore,
+            );
 
             // Free buffers and memory
             self.ctx
@@ -157,7 +181,7 @@ impl Renderer {
             }
         }
 
-        self.frame.number = (self.frame.number + 1) % FRAMES_IN_FLIGHT;
+        self.advance_frame()
     }
 
     pub fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -166,18 +190,27 @@ impl Renderer {
         let PhysicalSize { width, height } = new_size;
         self.new_size = vk::Extent2D { width, height };
     }
+
+    fn advance_frame(&mut self) {
+        self.frame_number = (self.frame_number + 1) % FRAMES_IN_FLIGHT;
+    }
+
+    fn current_frame(&self) -> &Frame {
+        &self.frames_in_flight[self.frame_number]
+    }
 }
 
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             self.resources.destroy(&mut self.ctx);
+            self.ctx.device.destroy_command_pool(self.cmd_pool, None);
+            self.sync_pool.destroy_all(&self.ctx.device);
         }
     }
 }
 
 struct Resources {
-    gpu_program: GpuProgram,
     render_pass: vk::RenderPass,
     descriptor_pool: vk::DescriptorPool,
     texture: Texture,
@@ -185,12 +218,7 @@ struct Resources {
     uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
     descriptor_set_layouts: SmallVec<[vk::DescriptorSetLayout; 2]>,
     descriptor_sets: SmallVec<[vk::DescriptorSet; 2]>,
-    cmd_pool: vk::CommandPool,
-    cmd_bufs: SmallVec<[vk::CommandBuffer; FRAMES_IN_FLIGHT]>,
     pipeline: Pipeline,
-    image_available_semaphores: SmallVec<[vk::Semaphore; FRAMES_IN_FLIGHT]>,
-    render_finished_semaphores: SmallVec<[vk::Semaphore; FRAMES_IN_FLIGHT]>,
-    in_flight_fences: SmallVec<[vk::Fence; FRAMES_IN_FLIGHT]>,
 }
 
 struct Texture {
@@ -199,19 +227,14 @@ struct Texture {
     image_view: vk::ImageView,
 }
 
-struct UniformBuffer {
-    memory: vk::DeviceMemory,
-    buffer: vk::Buffer,
-}
-
 struct Pipeline {
     handle: vk::Pipeline,
     layout: vk::PipelineLayout,
 }
 
 impl Resources {
-    pub fn new(ctx: &Context, sync_pool: &mut SyncPool) -> Resources {
-        let shader = GpuProgram::new(
+    pub fn new(ctx: &Context) -> Resources {
+        let shader = Shader::new(
             &ctx.device,
             &[
                 (SHADER_VERT, vk::ShaderStageFlagBits::VERTEX),
@@ -264,75 +287,27 @@ impl Resources {
             };
 
             drop(shader_stages);
-
-            let cmd_pool_info = vk::CommandPoolCreateInfoBuilder::new()
-                .queue_family_index(ctx.physical_device.queue_families.graphics)
-                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-            let cmd_pool = ctx
-                .device
-                .create_command_pool(&cmd_pool_info, None)
-                .unwrap();
+            shader.destroy(&ctx.device);
 
             trace!("Creating command buffers");
-            let framebuffers = ctx.swapchain.framebuffers(&ctx.device, render_pass);
-            let cmd_buf_allocate_info = vk::CommandBufferAllocateInfoBuilder::new()
-                .command_pool(cmd_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(framebuffers.len() as _);
-            let cmd_bufs = ctx
-                .device
-                .allocate_command_buffers(&cmd_buf_allocate_info)
-                .unwrap();
-
-            let image_available_semaphores: SmallVec<_> = (0..FRAMES_IN_FLIGHT)
-                .map(|_| sync_pool.semaphore(&ctx.device))
-                .collect();
-            let render_finished_semaphores: SmallVec<_> = (0..FRAMES_IN_FLIGHT)
-                .map(|_| sync_pool.semaphore(&ctx.device))
-                .collect();
-
-            let in_flight_fences: SmallVec<_> = (0..FRAMES_IN_FLIGHT)
-                .map(|_| sync_pool.fence(&ctx.device, true))
-                .collect();
-
             Self {
                 descriptor_pool,
                 descriptor_set_layouts: descriptor_set_layouts.to_smallvec(),
                 descriptor_sets: descriptor_sets.to_smallvec(),
-                cmd_pool,
-                cmd_bufs: cmd_bufs.to_smallvec(),
                 render_pass,
                 pipeline,
                 uniforms,
-                gpu_program: shader,
                 texture,
                 sampler,
-                image_available_semaphores,
-                render_finished_semaphores,
-                in_flight_fences,
             }
         }
     }
 
     pub unsafe fn destroy(&mut self, ctx: &mut Context) {
-        for semaphore in self
-            .image_available_semaphores
-            .iter()
-            .chain(self.render_finished_semaphores.iter())
-        {
-            ctx.device.destroy_semaphore(*semaphore, None);
-        }
-
-        for fence in self.in_flight_fences.iter() {
-            ctx.device.destroy_fence(*fence, None);
-        }
-
         memory::release_resources(
             ctx,
             &self.uniforms,
-            &self.gpu_program,
             self.descriptor_pool,
-            self.cmd_pool,
             self.pipeline.handle,
             self.pipeline.layout,
             self.descriptor_set_layouts[0],

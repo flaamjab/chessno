@@ -44,7 +44,7 @@ impl SyncPool {
         fence
     }
 
-    pub unsafe fn destroy_all(&mut self, device: &Arc<DeviceLoader>) {
+    pub unsafe fn destroy_all(&mut self, device: &DeviceLoader) {
         for s in &self.semaphores {
             device.destroy_semaphore(*s, None);
         }

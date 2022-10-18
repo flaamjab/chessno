@@ -8,15 +8,12 @@ use smallvec::SmallVec;
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::geometry::Vertex;
-use crate::gfx::gpu_program::GpuProgram;
-use crate::gfx::transform::Transform;
+use crate::transform::Transform;
 
 pub unsafe fn release_resources(
     ctx: &mut Context,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    shader: &GpuProgram,
     descriptor_pool: vk::DescriptorPool,
-    command_pool: vk::CommandPool,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -38,11 +35,7 @@ pub unsafe fn release_resources(
         ctx.device.free_memory(*m, None);
     }
 
-    shader.destroy(&ctx.device);
-
     ctx.device.destroy_descriptor_pool(descriptor_pool, None);
-
-    ctx.device.destroy_command_pool(command_pool, None);
 
     ctx.device.destroy_pipeline(pipeline, None);
 
@@ -434,6 +427,30 @@ pub unsafe fn find_memory_type(
     }
 
     panic!("failed to find suitable memory type");
+}
+
+pub unsafe fn create_command_pool(device: &DeviceLoader, queue_family: u32) -> vk::CommandPool {
+    let info = vk::CommandPoolCreateInfoBuilder::new()
+        .queue_family_index(queue_family)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+
+    device
+        .create_command_pool(&info, None)
+        .expect("failed to create command pool")
+}
+
+pub unsafe fn create_command_buffers(
+    device: &DeviceLoader,
+    cmd_pool: vk::CommandPool,
+    count: usize,
+) -> SmallVec<[vk::CommandBuffer; 8]> {
+    let cmd_buf_allocate_info = vk::CommandBufferAllocateInfoBuilder::new()
+        .command_pool(cmd_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(count as _);
+    device
+        .allocate_command_buffers(&cmd_buf_allocate_info)
+        .expect("failed to create command buffer")
 }
 
 impl Transform {

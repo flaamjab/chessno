@@ -1,16 +1,9 @@
-use cgmath::{
-    Angle, Array, Deg, EuclideanSpace, InnerSpace, Matrix, Matrix4, Point3, Rad, SquareMatrix,
-    Vector3, Vector4,
-};
-
-use crate::logging::trace;
-
-const TOLERANCE: f32 = 1e-4;
+use cgmath::{Angle, Deg, Matrix, Matrix4, Point3, Rad, Vector3};
 
 pub struct Camera {
-    position: Point3<f32>,
-    direction: Vector3<f32>,
-    projection: Matrix4<f32>,
+    pub position: Point3<f32>,
+    pub direction: Vector3<f32>,
+    pub projection: Matrix4<f32>,
 }
 
 impl Camera {
@@ -30,7 +23,7 @@ impl Camera {
         let view = Matrix4::look_at_rh(
             self.position,
             self.position + self.direction,
-            Vector3::unit_y(),
+            -Vector3::unit_y(),
         );
         self.projection * view
     }

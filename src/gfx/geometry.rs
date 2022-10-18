@@ -1,5 +1,4 @@
 use cgmath::Vector3;
-use erupt::vk;
 
 use crate::mesh::Mesh;
 

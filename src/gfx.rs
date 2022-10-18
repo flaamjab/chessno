@@ -1,13 +1,12 @@
 pub mod context;
 pub mod g;
 pub mod geometry;
-pub mod gpu_program;
 pub mod memory;
-pub mod mesh;
 pub mod physical_device;
 pub mod renderer;
+pub mod shader;
+mod spatial;
 pub mod swapchain;
 pub mod sync_pool;
 pub mod texture;
-pub mod transform;
 pub mod validation;

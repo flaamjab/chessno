@@ -1,15 +1,15 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 
+use cgmath::Matrix4;
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 use memoffset::offset_of;
-use winit::dpi::PhysicalSize;
 
 use crate::gfx::context::Context;
 use crate::gfx::geometry::Vertex;
-use crate::gfx::memory;
-use crate::gfx::transform::Transform;
+use crate::gfx::spatial::Spatial;
 use crate::logging::trace;
+use crate::transform::Transform;
 
 impl Vertex {
     fn binding_desc<'a>() -> vk::VertexInputBindingDescriptionBuilder<'a> {
@@ -111,7 +111,7 @@ pub unsafe fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::NONE)
+        .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()
@@ -132,7 +132,7 @@ pub unsafe fn create_pipeline(
 
     let push_constant_range = vk::PushConstantRangeBuilder::new()
         .offset(0)
-        .size(size_of::<Transform>() as _)
+        .size(size_of::<Spatial>() as _)
         .stage_flags(vk::ShaderStageFlags::VERTEX);
     let push_constant_ranges = [push_constant_range];
 
@@ -176,7 +176,7 @@ pub unsafe fn setup_draw_state(
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     descriptor_set: vk::DescriptorSet,
-    push_constant: &Transform,
+    push_constant: &Spatial,
 ) {
     device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
@@ -188,8 +188,8 @@ pub unsafe fn setup_draw_state(
         pipeline_layout,
         vk::ShaderStageFlags::VERTEX,
         0,
-        size_of::<Transform>() as _,
-        push_constant as *const Transform as *const c_void,
+        size_of::<Spatial>() as _,
+        push_constant as *const Spatial as *const c_void,
     );
 
     device.cmd_bind_descriptor_sets(
@@ -358,7 +358,7 @@ pub unsafe fn draw(
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     index_count: usize,
-    transform: &Transform,
+    mvp: &Spatial,
     descriptor_set: vk::DescriptorSet,
     uniform_mem: vk::DeviceMemory,
 ) {
@@ -371,7 +371,7 @@ pub unsafe fn draw(
         vertex_buffer,
         index_buffer,
         descriptor_set,
-        &transform,
+        &mvp,
     );
     device.cmd_draw_indexed(cmd_buf, index_count as u32, 1, 0, 0, 0);
 }

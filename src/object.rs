@@ -1,9 +1,8 @@
 use cgmath::{Vector3, Vector4};
 
-use crate::mesh::Mesh;
+use crate::{mesh::Mesh, transform::Transform};
 
 pub struct Object {
     pub mesh: Mesh,
-    pub position: Vector3<f32>,
-    pub rotation: Vector4<f32>,
+    pub transform: Transform,
 }
