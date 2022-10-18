@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::geometry::Vertex;
-use crate::shader::Shader;
+use crate::gpu_program::Shader;
 
 #[derive(Clone)]
 pub struct Mesh {

@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use camera::Camera;
-use cgmath::{Array, EuclideanSpace, Point3, Vector3, Vector4, Zero};
+use cgmath::{EuclideanSpace, Point3, Vector3, Vector4, Zero};
 use renderer::Renderer;
 use winit::{
     dpi::PhysicalSize,
@@ -15,14 +15,14 @@ use crate::object::Object;
 
 mod camera;
 mod context;
-mod erupt;
+mod g;
 mod geometry;
+mod gpu_program;
 mod logging;
 mod mesh;
 mod object;
 mod physical_device;
 mod renderer;
-mod shader;
 mod swapchain;
 mod sync_pool;
 mod transform;
@@ -48,11 +48,11 @@ pub fn linux_main() {
             position: Vector3::zero(),
             rotation: up,
         },
-        Object {
-            mesh: plane,
-            position: Vector3::new(1.0, 1.0, 1.0),
-            rotation: up,
-        },
+        // Object {
+        //     mesh: plane,
+        //     position: Vector3::new(1.0, 1.0, 1.0),
+        //     rotation: up,
+        // },
     ];
 
     let rotation_speed = 10.0f32;

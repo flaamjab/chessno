@@ -7,11 +7,11 @@ use winit::window::Window;
 
 use crate::camera::Camera;
 use crate::context::Context;
-use crate::erupt as g;
+use crate::g;
 use crate::geometry::Geometry;
+use crate::gpu_program::Shader;
 use crate::logging::trace;
 use crate::object::Object;
-use crate::shader::Shader;
 use crate::sync_pool::SyncPool;
 use crate::transform::Transform;
 
@@ -54,7 +54,6 @@ impl Renderer {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
 
-        trace!("Acquiring swapchain image");
         let image_index = unsafe {
             g::acquire_image(
                 &mut self.ctx,
@@ -70,18 +69,35 @@ impl Renderer {
         }
 
         let image_index = image_index.unwrap();
+        let cmd_buf = self.resources.cmd_bufs[self.frame.number];
 
-        trace!("Pushing draw command buffers");
+        unsafe {
+            let framebuffers = self
+                .ctx
+                .swapchain
+                .framebuffers(&self.ctx.device, self.resources.render_pass);
+            g::begin_draw(
+                &self.ctx.device,
+                cmd_buf,
+                self.resources.render_pass,
+                framebuffers[image_index as usize],
+                self.ctx.swapchain.image_extent(),
+            );
+        }
+
+        let mut free_queue = Vec::new();
         for o in objects {
             unsafe {
                 let mut geometry = Geometry::new();
                 geometry.push_mesh(&o.mesh);
+
                 let (vertex_buf, vertex_mem) = g::create_vertex_buffer(
                     &self.ctx,
                     geometry.vertices(),
                     copy_queue_family,
                     copy_queue,
                 );
+
                 let (index_buf, index_mem) = g::create_index_buffer(
                     &self.ctx,
                     geometry.indices(),
@@ -89,44 +105,53 @@ impl Renderer {
                     copy_queue,
                 );
 
+                free_queue.push((vertex_buf, vertex_mem));
+                free_queue.push((index_buf, index_mem));
+
                 let transform = Transform::new(o.position, o.rotation, camera);
-                g::draw(
-                    &mut self.ctx,
-                    &self.resources.in_flight_fences,
-                    &self.resources.image_available_semaphores,
-                    &self.resources.render_finished_semaphores,
-                    self.frame.number,
-                    image_index,
-                    &self.resources.cmd_bufs,
-                    self.resources.render_pass,
+                g::draw_mesh(
+                    &self.ctx.device,
                     self.resources.pipeline.handle,
                     self.resources.pipeline.layout,
+                    cmd_buf,
                     vertex_buf,
                     index_buf,
                     geometry.indices().len(),
-                    &self.resources.descriptor_sets,
                     &transform,
-                    &self.resources.uniforms,
+                    self.resources.descriptor_sets[self.frame.number],
+                    self.resources.uniforms[self.frame.number].1,
                 );
-
-                self.ctx
-                    .device
-                    .queue_wait_idle(self.ctx.queues.graphics)
-                    .expect("failed to wait for queue");
-                self.ctx.device.destroy_buffer(index_buf, None);
-                self.ctx.device.free_memory(index_mem, None);
-                self.ctx.device.destroy_buffer(vertex_buf, None);
-                self.ctx.device.free_memory(vertex_mem, None);
             }
         }
 
-        trace!("Presenting image");
         unsafe {
-            g::present(
-                &self.ctx,
-                image_index,
-                self.resources.render_finished_semaphores[self.frame.number],
+            // End draw
+            let image_available_semaphore =
+                self.resources.image_available_semaphores[self.frame.number];
+            let render_finished_semaphore =
+                self.resources.render_finished_semaphores[self.frame.number];
+            let in_flight_fence = self.resources.in_flight_fences[self.frame.number];
+            g::end_draw(
+                &self.ctx.device,
+                self.ctx.queues.graphics,
+                cmd_buf,
+                image_available_semaphore,
+                render_finished_semaphore,
+                in_flight_fence,
             );
+
+            // Present
+            g::present(&self.ctx, image_index, render_finished_semaphore);
+
+            // Free buffers and memory
+            self.ctx
+                .device
+                .queue_wait_idle(self.ctx.queues.graphics)
+                .expect("failed to wait for queue");
+            for (buf, mem) in free_queue.drain(..) {
+                self.ctx.device.destroy_buffer(buf, None);
+                self.ctx.device.free_memory(mem, None);
+            }
         }
 
         self.frame.number = (self.frame.number + 1) % FRAMES_IN_FLIGHT;
