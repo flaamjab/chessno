@@ -13,8 +13,8 @@ use winit::dpi::PhysicalSize;
 
 use crate::context::Context;
 use crate::geometry::Vertex;
+use crate::gpu_program::Shader;
 use crate::logging::trace;
-use crate::shader::Shader;
 use crate::transform::Transform;
 
 impl Transform {
@@ -177,7 +177,7 @@ pub unsafe fn create_pipeline(
     (pipeline, pipeline_layout)
 }
 
-pub unsafe fn record_command_buffer(
+pub unsafe fn setup_draw_state(
     device: &DeviceLoader,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
@@ -185,36 +185,8 @@ pub unsafe fn record_command_buffer(
     index_count: usize,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
-    render_pass: vk::RenderPass,
-    framebuffer: vk::Framebuffer,
     descriptor_set: vk::DescriptorSet,
-    draw_area_size: &vk::Extent2D,
 ) {
-    let cmd_buf_begin_info = vk::CommandBufferBeginInfoBuilder::new();
-    device
-        .begin_command_buffer(cmd_buf, &cmd_buf_begin_info)
-        .unwrap();
-
-    let clear_values = vec![vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
-        },
-    }];
-    let render_pass_begin_info = vk::RenderPassBeginInfoBuilder::new()
-        .render_pass(render_pass)
-        .framebuffer(framebuffer)
-        .render_area(vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: *draw_area_size,
-        })
-        .clear_values(&clear_values);
-
-    device.cmd_begin_render_pass(
-        cmd_buf,
-        &render_pass_begin_info,
-        vk::SubpassContents::INLINE,
-    );
-
     device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
     device.cmd_bind_vertex_buffers(cmd_buf, 0, &[vertex_buffer], &[0]);
@@ -228,27 +200,6 @@ pub unsafe fn record_command_buffer(
         &[descriptor_set],
         &[],
     );
-
-    let viewport = vk::ViewportBuilder::new()
-        .x(0.0)
-        .y(0.0)
-        .width(draw_area_size.width as f32)
-        .height(draw_area_size.height as f32)
-        .min_depth(0.0)
-        .max_depth(1.0);
-    device.cmd_set_viewport(cmd_buf, 0, &[viewport]);
-
-    let scissor = vk::Rect2D {
-        extent: *draw_area_size,
-        offset: vk::Offset2D { x: 0, y: 0 },
-    }
-    .into_builder();
-    device.cmd_set_scissor(cmd_buf, 0, &[scissor]);
-
-    device.cmd_draw_indexed(cmd_buf, index_count as u32, 1, 0, 0, 0);
-    device.cmd_end_render_pass(cmd_buf);
-
-    device.end_command_buffer(cmd_buf).unwrap();
 }
 
 pub unsafe fn allocate_buffer(
@@ -291,7 +242,7 @@ pub unsafe fn create_vertex_buffer(
     copy_queue_family: u32,
     copy_queue: vk::Queue,
 ) -> (vk::Buffer, vk::DeviceMemory) {
-    let size = (size_of_val(&vertices[0]) * vertices.len());
+    let size = size_of_val(&vertices[0]) * vertices.len();
     let (staging_buf, staging_mem) = allocate_buffer(
         ctx,
         size,
@@ -464,7 +415,7 @@ pub unsafe fn create_uniform_buffers(
 }
 
 pub unsafe fn upload_uniform_buffers(
-    device: &Arc<DeviceLoader>,
+    device: &DeviceLoader,
     transform: &Transform,
     uniform_mem: vk::DeviceMemory,
 ) {
@@ -951,58 +902,109 @@ pub unsafe fn acquire_image(
     maybe_image.value
 }
 
-pub unsafe fn draw(
-    ctx: &mut Context,
-    in_flight_fences: &[vk::Fence],
-    image_available_semaphores: &[vk::Semaphore],
-    render_finished_semaphores: &[vk::Semaphore],
-    frame: usize,
-    image_index: u32,
-    cmd_bufs: &[vk::CommandBuffer],
+pub unsafe fn begin_draw(
+    device: &DeviceLoader,
+    cmd_buf: vk::CommandBuffer,
     render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    draw_area_size: &vk::Extent2D,
+) {
+    device
+        .reset_command_buffer(cmd_buf, CommandBufferResetFlags::empty())
+        .unwrap();
+
+    let cmd_buf_begin_info = vk::CommandBufferBeginInfoBuilder::new();
+    device
+        .begin_command_buffer(cmd_buf, &cmd_buf_begin_info)
+        .unwrap();
+
+    let clear_values = vec![vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [0.0, 0.0, 0.0, 1.0],
+        },
+    }];
+    let render_pass_begin_info = vk::RenderPassBeginInfoBuilder::new()
+        .render_pass(render_pass)
+        .framebuffer(framebuffer)
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: *draw_area_size,
+        })
+        .clear_values(&clear_values);
+
+    device.cmd_begin_render_pass(
+        cmd_buf,
+        &render_pass_begin_info,
+        vk::SubpassContents::INLINE,
+    );
+
+    let viewport = vk::ViewportBuilder::new()
+        .x(0.0)
+        .y(0.0)
+        .width(draw_area_size.width as f32)
+        .height(draw_area_size.height as f32)
+        .min_depth(0.0)
+        .max_depth(1.0);
+    device.cmd_set_viewport(cmd_buf, 0, &[viewport]);
+
+    let scissor = vk::Rect2D {
+        extent: *draw_area_size,
+        offset: vk::Offset2D { x: 0, y: 0 },
+    }
+    .into_builder();
+    device.cmd_set_scissor(cmd_buf, 0, &[scissor]);
+}
+
+pub unsafe fn draw_mesh(
+    device: &DeviceLoader,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
+    cmd_buf: vk::CommandBuffer,
     vertex_buffer: vk::Buffer,
     index_buffer: vk::Buffer,
     index_count: usize,
-    descriptor_sets: &[vk::DescriptorSet],
     transform: &Transform,
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
+    descriptor_set: vk::DescriptorSet,
+    uniform_mem: vk::DeviceMemory,
 ) {
-    let buf = cmd_bufs[frame];
-    ctx.device
-        .reset_command_buffer(buf, CommandBufferResetFlags::empty())
-        .unwrap();
-
-    upload_uniform_buffers(&ctx.device, &transform, uniforms[frame].1);
-
-    let framebuffers = ctx.swapchain.framebuffers(&ctx.device, render_pass);
-    record_command_buffer(
-        &ctx.device,
+    upload_uniform_buffers(&device, &transform, uniform_mem);
+    setup_draw_state(
+        &device,
         pipeline,
         pipeline_layout,
-        buf,
+        cmd_buf,
         index_count,
         vertex_buffer,
         index_buffer,
-        render_pass,
-        framebuffers[image_index as usize],
-        descriptor_sets[frame],
-        ctx.swapchain.image_extent(),
+        descriptor_set,
     );
-    let wait_semaphores = vec![image_available_semaphores[frame]];
-    let command_buffers = vec![buf];
-    let signal_semaphores = vec![render_finished_semaphores[frame]];
+    device.cmd_draw_indexed(cmd_buf, index_count as u32, 1, 0, 0, 0);
+}
 
+pub unsafe fn end_draw(
+    device: &DeviceLoader,
+    graphics_queue: vk::Queue,
+    cmd_buf: vk::CommandBuffer,
+    image_available_semaphore: vk::Semaphore,
+    render_finished_semaphore: vk::Semaphore,
+    in_flight_fence: vk::Fence,
+) {
+    device.cmd_end_render_pass(cmd_buf);
+    device.end_command_buffer(cmd_buf).unwrap();
+
+    let wait_semaphores = [image_available_semaphore];
+    let command_buffers = [cmd_buf];
+    let signal_semaphores = [render_finished_semaphore];
     let submit_info = vk::SubmitInfoBuilder::new()
         .wait_semaphores(&wait_semaphores)
         .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
         .command_buffers(&command_buffers)
         .signal_semaphores(&signal_semaphores);
-    let in_flight_fence = in_flight_fences[frame];
-    ctx.device.reset_fences(&[in_flight_fence]).unwrap();
-    ctx.device
-        .queue_submit(ctx.queues.graphics, &[submit_info], in_flight_fence)
+
+    device.reset_fences(&[in_flight_fence]).unwrap();
+
+    device
+        .queue_submit(graphics_queue, &[submit_info], in_flight_fence)
         .unwrap();
 }
 
