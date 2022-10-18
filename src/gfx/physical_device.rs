@@ -3,7 +3,7 @@ use std::os::raw::c_char;
 
 use erupt::{vk, InstanceLoader};
 
-use crate::context::Context;
+use crate::gfx::context::Context;
 
 #[derive(Clone)]
 pub struct PhysicalDevice {

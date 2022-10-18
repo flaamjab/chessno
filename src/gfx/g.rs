@@ -5,11 +5,11 @@ use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 use memoffset::offset_of;
 use winit::dpi::PhysicalSize;
 
-use crate::context::Context;
-use crate::geometry::Vertex;
+use crate::gfx::context::Context;
+use crate::gfx::geometry::Vertex;
+use crate::gfx::memory;
+use crate::gfx::transform::Transform;
 use crate::logging::trace;
-use crate::memory;
-use crate::transform::Transform;
 
 impl Vertex {
     fn binding_desc<'a>() -> vk::VertexInputBindingDescriptionBuilder<'a> {

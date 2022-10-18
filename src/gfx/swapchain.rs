@@ -6,8 +6,8 @@ use std::{
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 
+use crate::gfx::physical_device::PhysicalDevice;
 use crate::logging::trace;
-use crate::physical_device::PhysicalDevice;
 
 pub struct Swapchain {
     handle: vk::SwapchainKHR,

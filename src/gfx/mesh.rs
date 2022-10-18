@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::geometry::Vertex;
-use crate::gpu_program::Shader;
+use crate::gfx::geometry::Vertex;
+use crate::gfx::gpu_program::GpuProgram;
 
 #[derive(Clone)]
 pub struct Mesh {
@@ -9,7 +9,7 @@ pub struct Mesh {
     pub indices: Vec<u16>,
 }
 
-pub fn new_cube(shader: &Arc<Shader>) -> Mesh {
+pub fn new_cube(shader: &Arc<GpuProgram>) -> Mesh {
     let raw_vertices: [f32; 180] = [
         -0.5, -0.5, -0.5, 0.0, 0.0, 0.5, -0.5, -0.5, 1.0, 0.0, 0.5, 0.5, -0.5, 1.0, 1.0, 0.5, 0.5,
         -0.5, 1.0, 1.0, -0.5, 0.5, -0.5, 0.0, 1.0, -0.5, -0.5, -0.5, 0.0, 0.0, -0.5, -0.5, 0.5,

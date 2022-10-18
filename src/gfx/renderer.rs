@@ -7,19 +7,19 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::camera::Camera;
-use crate::context::Context;
-use crate::g;
-use crate::geometry::Geometry;
-use crate::gpu_program::Shader;
+use crate::gfx::context::Context;
+use crate::gfx::g;
+use crate::gfx::geometry::Geometry;
+use crate::gfx::gpu_program::GpuProgram;
+use crate::gfx::memory;
+use crate::gfx::sync_pool::SyncPool;
+use crate::gfx::texture;
+use crate::gfx::transform::Transform;
 use crate::logging::trace;
-use crate::memory;
 use crate::object::Object;
-use crate::sync_pool::SyncPool;
-use crate::texture;
-use crate::transform::Transform;
 
-const SHADER_VERT: &[u8] = include_bytes!("../shaders/unlit.vert.spv");
-const SHADER_FRAG: &[u8] = include_bytes!("../shaders/unlit.frag.spv");
+const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
+const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
 
 const FRAMES_IN_FLIGHT: usize = 2;
 
@@ -177,7 +177,7 @@ impl Drop for Renderer {
 }
 
 struct Resources {
-    shader: Shader,
+    gpu_program: GpuProgram,
     render_pass: vk::RenderPass,
     descriptor_pool: vk::DescriptorPool,
     texture: Texture,
@@ -211,7 +211,7 @@ struct Pipeline {
 
 impl Resources {
     pub fn new(ctx: &Context, sync_pool: &mut SyncPool) -> Resources {
-        let shader = Shader::new(
+        let shader = GpuProgram::new(
             &ctx.device,
             &[
                 (SHADER_VERT, vk::ShaderStageFlagBits::VERTEX),
@@ -304,7 +304,7 @@ impl Resources {
                 render_pass,
                 pipeline,
                 uniforms,
-                shader,
+                gpu_program: shader,
                 texture,
                 sampler,
                 image_available_semaphores,
@@ -330,7 +330,7 @@ impl Resources {
         memory::release_resources(
             ctx,
             &self.uniforms,
-            &self.shader,
+            &self.gpu_program,
             self.descriptor_pool,
             self.cmd_pool,
             self.pipeline.handle,

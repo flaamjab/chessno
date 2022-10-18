@@ -2,7 +2,6 @@ use std::time::Instant;
 
 use camera::Camera;
 use cgmath::{EuclideanSpace, Point3, Vector3, Vector4, Zero};
-use renderer::Renderer;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -10,27 +9,15 @@ use winit::{
     window::Window,
 };
 
+use crate::gfx::mesh;
+use crate::gfx::renderer::Renderer;
 use crate::logging::{debug, trace};
 use crate::object::Object;
 
 mod camera;
-mod context;
-mod g;
-mod geometry;
-mod gpu_program;
+mod gfx;
 mod logging;
-mod memory;
-mod mesh;
 mod object;
-mod physical_device;
-mod renderer;
-mod swapchain;
-mod sync_pool;
-mod texture;
-mod transform;
-#[cfg(debug_assertions)]
-mod validation;
-
 const TITLE: &str = "Isochess";
 
 pub fn linux_main() {

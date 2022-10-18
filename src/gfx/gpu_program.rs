@@ -7,16 +7,16 @@ use thiserror::Error as Err;
 
 use crate::logging::debug;
 
-pub struct Shader {
+pub struct GpuProgram {
     modules: SmallVec<[(vk::ShaderModule, vk::ShaderStageFlagBits); 8]>,
     entry_point: CString,
 }
 
-impl Shader {
+impl GpuProgram {
     pub fn new(
         device: &Arc<DeviceLoader>,
         programs: &[(&[u8], vk::ShaderStageFlagBits)],
-    ) -> Result<Shader, Error> {
+    ) -> Result<GpuProgram, Error> {
         let mut modules = SmallVec::with_capacity(programs.len());
         for (bytes, stage) in programs {
             let vert_decoded = utils::decode_spv(bytes).unwrap();

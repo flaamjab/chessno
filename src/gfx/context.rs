@@ -6,10 +6,10 @@ use erupt::{cstr, utils::surface, vk, DeviceLoader, EntryLoader, InstanceLoader}
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::gfx::physical_device::PhysicalDevice;
+use crate::gfx::swapchain::Swapchain;
+use crate::gfx::validation;
 use crate::logging::{debug, info};
-use crate::physical_device::PhysicalDevice;
-use crate::swapchain::Swapchain;
-use crate::validation;
 
 const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
 

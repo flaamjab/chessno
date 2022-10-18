@@ -5,16 +5,16 @@ use std::ptr;
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 
-use crate::context::Context;
-use crate::g;
-use crate::geometry::Vertex;
-use crate::gpu_program::Shader;
-use crate::transform::Transform;
+use crate::gfx::context::Context;
+use crate::gfx::g;
+use crate::gfx::geometry::Vertex;
+use crate::gfx::gpu_program::GpuProgram;
+use crate::gfx::transform::Transform;
 
 pub unsafe fn release_resources(
     ctx: &mut Context,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    shader: &Shader,
+    shader: &GpuProgram,
     descriptor_pool: vk::DescriptorPool,
     command_pool: vk::CommandPool,
     pipeline: vk::Pipeline,

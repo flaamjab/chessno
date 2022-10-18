@@ -6,9 +6,9 @@ use erupt::{vk, DeviceLoader};
 use image::io::Reader as ImageReader;
 use image::EncodableLayout;
 
-use crate::context::Context;
-use crate::g;
-use crate::memory;
+use crate::gfx::context::Context;
+use crate::gfx::g;
+use crate::gfx::memory;
 
 pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
     let max_anisotropy = ctx.physical_device.properties.limits.max_sampler_anisotropy;
