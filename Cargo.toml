@@ -1,5 +1,5 @@
 [package]
-name = "chess"
+name = "chessno"
 version = "0.0.0"
 edition = "2021"
 
@@ -7,7 +7,7 @@ edition = "2021"
 winit = "0.27"
 env_logger = "0.9"
 log = "0.4"
-cgmath = "0.18.0"
+nalgebra = "0.31.2"
 bytemuck = { version = "1.4", features = ["derive"] }
 rand = "0.8.5"
 image = { version =  "0.24", features = ["jpeg"] }

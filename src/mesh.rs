@@ -15,28 +15,35 @@ pub struct Mesh {
 impl Mesh {
     pub fn from_file(path: &Path) -> Result<Mesh, Error> {
         let reader = BufReader::new(File::open(path)?);
-        let obj = ObjData::load_buf(reader).expect("failed to load model");
+        let obj = ObjData::load_buf(reader)?;
 
         let mut indices = Vec::with_capacity(obj.position.len());
         for o in obj.objects {
             for g in o.groups {
                 for p in g.polys {
-                    for ix in p.0 {
-                        indices.push(ix.0 as u16);
+                    if p.0.len() == 4 {
+                        indices.extend(
+                            [p.0[0], p.0[1], p.0[2], p.0[2], p.0[0], p.0[3]].map(|t| t.0 as u16),
+                        );
+                    } else {
+                        panic!("unsupported OBJ face format")
                     }
                 }
             }
         }
 
-        let vertices = obj
+        let mut vertices: Vec<_> = obj
             .position
             .iter()
-            .zip(obj.texture)
-            .map(|(p, t)| Vertex {
-                pos: (p[0], p[1], p[2]).into(),
-                uv: (t[0], t[1], 0.0).into(),
+            .map(|p| Vertex {
+                pos: [p[0], p[1], p[2]],
+                uv: [0.0; 3],
             })
             .collect();
+
+        for (v, t) in vertices.iter_mut().zip(obj.texture) {
+            v.uv = [t[0], t[1], 0.0];
+        }
 
         Ok(Mesh { vertices, indices })
     }
@@ -44,20 +51,20 @@ impl Mesh {
     pub fn new_plane() -> Mesh {
         let vertices = [
             Vertex {
-                pos: (-0.5, -0.5, 0.0).into(),
-                uv: (0.0, 0.0, 0.0).into(),
+                pos: [-0.5, -0.5, 0.0],
+                uv: [0.0, 0.0, 0.0],
             },
             Vertex {
-                pos: (-0.5, 0.5, 0.0).into(),
-                uv: (0.0, 1.0, 0.0).into(),
+                pos: [-0.5, 0.5, 0.0],
+                uv: [0.0, 1.0, 0.0],
             },
             Vertex {
-                pos: (0.5, 0.5, 0.0).into(),
-                uv: (1.0, 1.0, 0.0).into(),
+                pos: [0.5, 0.5, 0.0],
+                uv: [1.0, 1.0, 0.0],
             },
             Vertex {
-                pos: (0.5, -0.5, 0.0).into(),
-                uv: (1.0, 0.0, 0.0).into(),
+                pos: [0.5, -0.5, 0.0],
+                uv: [1.0, 0.0, 0.0],
             },
         ]
         .to_vec();

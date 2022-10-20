@@ -1,12 +1,10 @@
-use cgmath::Vector3;
-
 use crate::mesh::Mesh;
 
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Vertex {
-    pub pos: Vector3<f32>,
-    pub uv: Vector3<f32>,
+    pub pos: [f32; 3],
+    pub uv: [f32; 3],
 }
 
 #[derive(Debug)]

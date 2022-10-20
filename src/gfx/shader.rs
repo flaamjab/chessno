@@ -1,5 +1,4 @@
 use std::ffi::CString;
-use std::sync::Arc;
 
 use erupt::{utils, vk, DeviceLoader};
 use smallvec::SmallVec;

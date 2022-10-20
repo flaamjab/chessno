@@ -6,7 +6,6 @@ use smallvec::{SmallVec, ToSmallVec};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::camera::Camera;
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::geometry::Geometry;
@@ -16,7 +15,7 @@ use crate::gfx::spatial::Spatial;
 use crate::gfx::sync_pool::SyncPool;
 use crate::gfx::texture;
 use crate::logging::trace;
-use crate::object::Object;
+use crate::scene::Scenelike;
 use crate::transform::Transform;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
@@ -78,7 +77,7 @@ impl Renderer {
         }
     }
 
-    pub fn draw(&mut self, objects: &[Object], camera: &Camera) {
+    pub fn draw(&mut self, scene: &impl Scenelike) {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
 
@@ -113,6 +112,8 @@ impl Renderer {
             );
         }
 
+        let objects = scene.objects();
+        let camera = scene.active_camera();
         let mut free_queue = Vec::with_capacity(objects.len());
         for o in objects {
             unsafe {
@@ -251,7 +252,7 @@ impl Resources {
                 memory::create_uniform_buffers(&ctx, size_of::<Transform>(), FRAMES_IN_FLIGHT);
             let descriptor_pool = memory::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
-            let path = Path::new("./assets/textures/happy-tree.png");
+            let path = Path::new("./assets/textures/crate.jpg");
             let (texture, texture_mem) = texture::create_texture(
                 &ctx,
                 &path,

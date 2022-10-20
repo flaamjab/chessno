@@ -1,7 +1,6 @@
 use std::ffi::c_void;
 use std::mem::size_of;
 
-use cgmath::Matrix4;
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 use memoffset::offset_of;
 
@@ -9,7 +8,6 @@ use crate::gfx::context::Context;
 use crate::gfx::geometry::Vertex;
 use crate::gfx::spatial::Spatial;
 use crate::logging::trace;
-use crate::transform::Transform;
 
 impl Vertex {
     fn binding_desc<'a>() -> vk::VertexInputBindingDescriptionBuilder<'a> {
@@ -111,7 +109,7 @@ pub unsafe fn create_pipeline(
         .rasterizer_discard_enable(false)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
-        .cull_mode(vk::CullModeFlags::BACK)
+        .cull_mode(vk::CullModeFlags::NONE)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
     let multisampling = vk::PipelineMultisampleStateCreateInfoBuilder::new()

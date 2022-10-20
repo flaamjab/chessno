@@ -43,7 +43,7 @@ pub unsafe fn create_texture(
     let image = ImageReader::open(path)?
         .decode()
         .expect("failed to decode image at {:path}");
-    let image = image.as_rgba8().expect("image was not in RGBA8 format");
+    let image = image.to_rgba8();
     let image_size = image.as_bytes().len();
 
     let (staging_buf, staging_mem) = memory::allocate_buffer(
