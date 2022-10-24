@@ -3,14 +3,18 @@ use std::{
     ops::Deref,
 };
 
-use erupt::{vk, DeviceLoader};
+use erupt::{vk, DeviceLoader, InstanceLoader};
 use smallvec::SmallVec;
 
 use crate::gfx::physical_device::PhysicalDevice;
+use crate::gfx::texture::DepthBuffer;
 use crate::logging::trace;
 
 pub struct Swapchain {
     handle: vk::SwapchainKHR,
+    surface: vk::SurfaceKHR,
+    present_queue: vk::Queue,
+    depth_buffer: DepthBuffer,
     image_views: SmallVec<[vk::ImageView; 8]>,
     image_extent: vk::Extent2D,
     image_count: u32,
@@ -21,6 +25,7 @@ impl Swapchain {
     pub fn new(
         device: &DeviceLoader,
         physical_device: &PhysicalDevice,
+        present_queue: vk::Queue,
         surface: vk::SurfaceKHR,
         draw_area_size: &vk::Extent2D,
     ) -> Self {
@@ -39,13 +44,60 @@ impl Swapchain {
             let image_views =
                 create_image_views(&device, swapchain, physical_device.surface_format);
 
+            let depth_buffer = DepthBuffer::new(
+                device,
+                physical_device,
+                physical_device.depth_format,
+                &image_extent,
+            );
+
             Self {
                 handle: swapchain,
+                surface,
+                depth_buffer,
+                present_queue,
                 image_views,
                 image_count,
                 image_extent,
                 framebuffers: RefCell::new(None),
             }
+        }
+    }
+
+    pub fn acquire_image(
+        &mut self,
+        device: &DeviceLoader,
+        physical_device: &PhysicalDevice,
+        in_flight_fence: vk::Fence,
+        image_available_semaphore: vk::Semaphore,
+        framebuffer_resized: &mut bool,
+        window_size: &vk::Extent2D,
+    ) -> Option<u32> {
+        unsafe {
+            device
+                .wait_for_fences(&[in_flight_fence], true, u64::MAX)
+                .unwrap();
+
+            let maybe_image = device.acquire_next_image_khr(
+                self.handle,
+                u64::MAX,
+                image_available_semaphore,
+                vk::Fence::null(),
+            );
+
+            if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR || *framebuffer_resized {
+                device
+                    .queue_wait_idle(self.present_queue)
+                    .expect("failed to wait on queue");
+                *framebuffer_resized = false;
+                trace!("Recreating swapchain");
+                self.recreate(&device, &physical_device, self.surface, &window_size);
+                return None;
+            } else if maybe_image.raw != vk::Result::SUCCESS {
+                panic!("failed to acquire image from swapchain, aborting...");
+            }
+
+            maybe_image.value
         }
     }
 
@@ -67,6 +119,12 @@ impl Swapchain {
             &new_image_extent,
             self.handle,
         );
+        let new_depth_buffer = DepthBuffer::new(
+            device,
+            physical_device,
+            physical_device.depth_format,
+            &new_image_extent,
+        );
 
         trace!("Destroying old swapchain");
         device.destroy_swapchain_khr(self.handle, None);
@@ -74,6 +132,7 @@ impl Swapchain {
         self.image_extent = new_image_extent;
         self.image_views =
             create_image_views(device, new_swapchain, physical_device.surface_format);
+        self.depth_buffer = new_depth_buffer;
         self.handle = new_swapchain;
 
         trace!("Swapchain recreated successfully");
@@ -89,8 +148,13 @@ impl Swapchain {
         render_pass: vk::RenderPass,
     ) -> Ref<[vk::Framebuffer]> {
         if self.framebuffers.borrow().is_none() {
-            let fbs =
-                create_framebuffers(device, &self.image_views, render_pass, &self.image_extent);
+            let fbs = create_framebuffers(
+                device,
+                &self.image_views,
+                self.depth_buffer.image_view,
+                render_pass,
+                &self.image_extent,
+            );
             self.framebuffers.replace(Some(fbs));
         }
 
@@ -101,12 +165,15 @@ impl Swapchain {
         &self.image_extent
     }
 
-    pub unsafe fn destroy(&mut self, device: &DeviceLoader) {
+    pub unsafe fn destroy(&mut self, device: &DeviceLoader, instance: &InstanceLoader) {
         self.release_dependents(device);
         device.destroy_swapchain_khr(self.handle, None);
+        instance.destroy_surface_khr(self.surface, None);
     }
 
     unsafe fn release_dependents(&mut self, device: &DeviceLoader) {
+        self.depth_buffer.destroy(device);
+
         if let Some(framebuffers) = self.framebuffers.borrow().deref() {
             for fb in framebuffers {
                 device.destroy_framebuffer(*fb, None);
@@ -212,13 +279,14 @@ unsafe fn create_image_views(
 unsafe fn create_framebuffers(
     device: &DeviceLoader,
     image_views: &[vk::ImageView],
+    depth_image_view: vk::ImageView,
     render_pass: vk::RenderPass,
     extent: &vk::Extent2D,
 ) -> SmallVec<[vk::Framebuffer; 8]> {
     image_views
         .iter()
         .map(|image_view| {
-            let attachments = vec![*image_view];
+            let attachments = [*image_view, depth_image_view];
             let framebuffer_info = vk::FramebufferCreateInfoBuilder::new()
                 .render_pass(render_pass)
                 .attachments(&attachments)

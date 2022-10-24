@@ -7,7 +7,6 @@ use memoffset::offset_of;
 use crate::gfx::context::Context;
 use crate::gfx::geometry::Vertex;
 use crate::gfx::spatial::Spatial;
-use crate::logging::trace;
 
 impl Vertex {
     fn binding_desc<'a>() -> vk::VertexInputBindingDescriptionBuilder<'a> {
@@ -39,7 +38,7 @@ impl Vertex {
 }
 
 pub unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
-    let attachments = vec![vk::AttachmentDescriptionBuilder::new()
+    let color_attachment = vk::AttachmentDescriptionBuilder::new()
         .format(ctx.physical_device.surface_format.format)
         .samples(vk::SampleCountFlagBits::_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -47,22 +46,47 @@ pub unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
         .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
         .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)];
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-    let color_attachment_refs = vec![vk::AttachmentReferenceBuilder::new()
+    let depth_attachment = vk::AttachmentDescriptionBuilder::new()
+        .format(ctx.physical_device.depth_format)
+        .samples(vk::SampleCountFlagBits::_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    let attachments = [color_attachment, depth_attachment];
+
+    let color_attachment_refs = [vk::AttachmentReferenceBuilder::new()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-    let subpasses = vec![vk::SubpassDescriptionBuilder::new()
+    let depth_attachment_ref = vk::AttachmentReferenceBuilder::new()
+        .attachment(1)
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let subpasses = [vk::SubpassDescriptionBuilder::new()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        .color_attachments(&color_attachment_refs)];
+        .color_attachments(&color_attachment_refs)
+        .depth_stencil_attachment(&depth_attachment_ref)];
 
     let dependencies = vec![vk::SubpassDependencyBuilder::new()
         .src_subpass(vk::SUBPASS_EXTERNAL)
         .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .src_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
         .src_access_mask(vk::AccessFlags::empty())
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+        .dst_stage_mask(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+        )
+        .dst_access_mask(
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        )];
 
     let render_pass_info = vk::RenderPassCreateInfoBuilder::new()
         .attachments(&attachments)
@@ -145,6 +169,15 @@ pub unsafe fn create_pipeline(
     let dynamic_state_info = vk::PipelineDynamicStateCreateInfoBuilder::new()
         .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
 
+    let depth_stencil_info = vk::PipelineDepthStencilStateCreateInfoBuilder::new()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_bounds_test_enable(false)
+        .min_depth_bounds(0.0)
+        .max_depth_bounds(1.0)
+        .stencil_test_enable(false);
+
     let pipeline_info = vk::GraphicsPipelineCreateInfoBuilder::new()
         .stages(&shader_stages)
         .vertex_input_state(&vertex_input)
@@ -156,6 +189,7 @@ pub unsafe fn create_pipeline(
         .layout(pipeline_layout)
         .render_pass(render_pass)
         .subpass(0)
+        .depth_stencil_state(&depth_stencil_info)
         .dynamic_state(&dynamic_state_info);
 
     let pipeline = ctx
@@ -261,40 +295,6 @@ pub unsafe fn create_transient_command_pool(
         .expect("Failed to create transient command pool for staging buffer transfer")
 }
 
-pub unsafe fn acquire_image(
-    ctx: &mut Context,
-    in_flight_fence: vk::Fence,
-    image_available_semaphore: vk::Semaphore,
-    framebuffer_resized: &mut bool,
-    window_size: &vk::Extent2D,
-) -> Option<u32> {
-    ctx.device
-        .wait_for_fences(&[in_flight_fence], true, u64::MAX)
-        .unwrap();
-
-    let maybe_image = ctx.device.acquire_next_image_khr(
-        ctx.swapchain.handle(),
-        u64::MAX,
-        image_available_semaphore,
-        vk::Fence::null(),
-    );
-
-    if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR || *framebuffer_resized {
-        ctx.device
-            .queue_wait_idle(ctx.queues.graphics)
-            .expect("failed to wait on queue");
-        *framebuffer_resized = false;
-        trace!("Recreating swapchain");
-        ctx.swapchain
-            .recreate(&ctx.device, &ctx.physical_device, ctx.surface, &window_size);
-        return None;
-    } else if maybe_image.raw != vk::Result::SUCCESS {
-        panic!("failed to acquire image from swapchain, aborting...");
-    }
-
-    maybe_image.value
-}
-
 pub unsafe fn begin_draw(
     device: &DeviceLoader,
     cmd_buf: vk::CommandBuffer,
@@ -311,11 +311,20 @@ pub unsafe fn begin_draw(
         .begin_command_buffer(cmd_buf, &cmd_buf_begin_info)
         .unwrap();
 
-    let clear_values = vec![vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
+    let clear_values = [
+        vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
         },
-    }];
+        vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        },
+    ];
+
     let render_pass_begin_info = vk::RenderPassBeginInfoBuilder::new()
         .render_pass(render_pass)
         .framebuffer(framebuffer)

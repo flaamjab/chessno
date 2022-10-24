@@ -3,17 +3,17 @@ use std::os::raw::c_char;
 
 use erupt::{vk, InstanceLoader};
 
-use crate::gfx::context::Context;
-
 #[derive(Clone)]
 pub struct PhysicalDevice {
     pub handle: vk::PhysicalDevice,
     pub queue_families: QueueFamilies,
     pub surface_format: vk::SurfaceFormatKHR,
     pub present_mode: vk::PresentModeKHR,
+    pub depth_format: vk::Format,
     pub properties: vk::PhysicalDeviceProperties,
     pub features: vk::PhysicalDeviceFeatures,
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
+    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
 #[derive(Clone)]
@@ -58,7 +58,7 @@ impl PhysicalDevice {
                     .get_physical_device_surface_formats_khr(physical_device, surface, None)
                     .unwrap();
 
-                let format = match formats
+                let surface_format = match formats
                     .iter()
                     .find(|surface_format| {
                         (surface_format.format == vk::Format::B8G8R8A8_SRGB
@@ -102,11 +102,19 @@ impl PhysicalDevice {
                     .get_physical_device_surface_capabilities_khr(physical_device, surface)
                     .expect("failed to query surface capabilities");
 
+                let depth_format = find_depth_format(&instance, physical_device)
+                    .expect("failed to find supported depth format");
+
+                let memory_properties =
+                    instance.get_physical_device_memory_properties(physical_device);
+
                 Some(PhysicalDevice {
                     handle: physical_device,
                     queue_families,
-                    surface_format: format,
+                    surface_format,
+                    depth_format,
                     surface_capabilities,
+                    memory_properties,
                     present_mode,
                     properties,
                     features,
@@ -123,13 +131,13 @@ impl PhysicalDevice {
     }
 }
 
-fn has_stencil_component(format: vk::Format) -> bool {
-    format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D32_SFLOAT_S8_UINT
-}
-
-pub unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
+pub unsafe fn find_depth_format(
+    instance: &InstanceLoader,
+    physical_device: vk::PhysicalDevice,
+) -> Option<vk::Format> {
     find_supported_format(
-        ctx,
+        instance,
+        physical_device,
         &[
             vk::Format::D32_SFLOAT,
             vk::Format::D32_SFLOAT_S8_UINT,
@@ -141,7 +149,8 @@ pub unsafe fn find_depth_format(ctx: &Context) -> Option<vk::Format> {
 }
 
 pub unsafe fn find_supported_format(
-    ctx: &Context,
+    instance: &InstanceLoader,
+    physical_device: vk::PhysicalDevice,
     candidates: &[vk::Format],
     tiling: vk::ImageTiling,
     features: vk::FormatFeatureFlags,
@@ -149,9 +158,7 @@ pub unsafe fn find_supported_format(
     candidates
         .iter()
         .find(|&format| {
-            let props = ctx
-                .instance
-                .get_physical_device_format_properties(ctx.physical_device.handle, *format);
+            let props = instance.get_physical_device_format_properties(physical_device, *format);
 
             let mut format_suitable = false;
             match tiling {

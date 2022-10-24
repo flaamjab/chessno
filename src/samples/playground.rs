@@ -101,19 +101,19 @@ impl PlaygroundScene {
 
         let look_offset = (self.look_sensitivity * delta).to_radians();
         if pressed_keys.contains(&VirtualKeyCode::Up) {
-            rot_up_down = Rotation3::from_axis_angle(&self.camera_right, -look_offset);
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::Down) {
             rot_up_down = Rotation3::from_axis_angle(&self.camera_right, look_offset);
         }
 
+        if pressed_keys.contains(&VirtualKeyCode::Down) {
+            rot_up_down = Rotation3::from_axis_angle(&self.camera_right, -look_offset);
+        }
+
         if pressed_keys.contains(&VirtualKeyCode::Left) {
-            rot_left_right = Rotation3::from_axis_angle(&self.up, -look_offset);
+            rot_left_right = Rotation3::from_axis_angle(&self.up, look_offset);
         }
 
         if pressed_keys.contains(&VirtualKeyCode::Right) {
-            rot_left_right = Rotation3::from_axis_angle(&self.up, look_offset);
+            rot_left_right = Rotation3::from_axis_angle(&self.up, -look_offset);
         }
 
         (camera_velocity, rot_left_right, rot_up_down)
@@ -146,7 +146,7 @@ impl DynamicScene for PlaygroundScene {
 
         self.camera_pos = self.camera_pos + camera_velocity;
         self.camera_dir = rot_left_right * rot_up_down * self.camera_dir;
-        self.camera_right = Unit::new_normalize(self.up.cross(&self.camera_dir));
+        self.camera_right = Unit::new_normalize(self.camera_dir.cross(&self.up));
 
         let projection = Camera::perspective(45.0, aspect_ratio, 0.1, 100.0);
         self.inner.cameras[0] = Camera::new(&self.camera_pos, &self.camera_dir, &projection);

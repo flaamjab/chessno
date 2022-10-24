@@ -14,6 +14,7 @@ use crate::gfx::shader::Shader;
 use crate::gfx::spatial::Spatial;
 use crate::gfx::sync_pool::SyncPool;
 use crate::gfx::texture;
+use crate::gfx::texture::Texture;
 use crate::logging::trace;
 use crate::scene::Scenelike;
 use crate::transform::Transform;
@@ -82,21 +83,17 @@ impl Renderer {
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
 
         let current_frame = self.current_frame().clone();
-        let image_index = unsafe {
-            g::acquire_image(
-                &mut self.ctx,
-                current_frame.in_flight_fence,
-                current_frame.image_available_semaphore,
-                &mut self.resize_required,
-                &self.new_size,
-            )
+        let image_index = match self.ctx.swapchain.acquire_image(
+            &self.ctx.device,
+            &self.ctx.physical_device,
+            current_frame.in_flight_fence,
+            current_frame.image_available_semaphore,
+            &mut self.resize_required,
+            &self.new_size,
+        ) {
+            Some(image_index) => image_index,
+            None => return,
         };
-
-        if image_index.is_none() {
-            return;
-        }
-
-        let image_index = image_index.unwrap();
 
         unsafe {
             let framebuffers = self
@@ -222,12 +219,6 @@ struct Resources {
     pipeline: Pipeline,
 }
 
-struct Texture {
-    memory: vk::DeviceMemory,
-    image: vk::Image,
-    image_view: vk::ImageView,
-}
-
 struct Pipeline {
     handle: vk::Pipeline,
     layout: vk::PipelineLayout,
@@ -313,9 +304,9 @@ impl Resources {
             self.pipeline.layout,
             self.descriptor_set_layouts[0],
             self.render_pass,
-            self.texture.image,
-            self.texture.memory,
-            self.texture.image_view,
+            &[self.texture.image],
+            &[self.texture.image_view],
+            &[self.texture.memory],
             self.sampler,
         )
     }

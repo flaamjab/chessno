@@ -10,6 +10,56 @@ use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::memory;
 
+use super::physical_device::PhysicalDevice;
+
+pub struct Texture {
+    pub memory: vk::DeviceMemory,
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+}
+
+pub struct DepthBuffer {
+    pub memory: vk::DeviceMemory,
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+}
+
+impl DepthBuffer {
+    pub fn destroy(&self, device: &DeviceLoader) {
+        unsafe {
+            device.destroy_image_view(self.image_view, None);
+            device.destroy_image(self.image, None);
+            device.free_memory(self.memory, None);
+        }
+    }
+}
+
+impl DepthBuffer {
+    pub fn new(
+        device: &DeviceLoader,
+        physical_device: &PhysicalDevice,
+        format: vk::Format,
+        extent: &vk::Extent2D,
+    ) -> Self {
+        unsafe {
+            let (depth_buffer_image, depth_buffer_mem) =
+                memory::create_depth_buffer(device, physical_device, format, &extent);
+            let depth_buffer_view = memory::create_image_view(
+                device,
+                depth_buffer_image,
+                format,
+                vk::ImageAspectFlags::DEPTH,
+            );
+
+            Self {
+                memory: depth_buffer_mem,
+                image: depth_buffer_image,
+                image_view: depth_buffer_view,
+            }
+        }
+    }
+}
+
 pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
     let max_anisotropy = ctx.physical_device.properties.limits.max_sampler_anisotropy;
     let info = vk::SamplerCreateInfoBuilder::new()
@@ -61,7 +111,8 @@ pub unsafe fn create_texture(
     );
 
     let (texture, texture_mem) = memory::create_image(
-        &ctx,
+        &ctx.device,
+        &ctx.physical_device,
         image.width(),
         image.height(),
         vk::Format::R8G8B8A8_SRGB,
@@ -106,21 +157,12 @@ pub unsafe fn create_texture(
 }
 
 pub unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::ImageView {
-    let image_view_info = vk::ImageViewCreateInfoBuilder::new()
-        .image(texture)
-        .view_type(vk::ImageViewType::_2D)
-        .format(vk::Format::R8G8B8A8_SRGB)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-
-    device
-        .create_image_view(&image_view_info, None)
-        .expect("failed to create texture view")
+    memory::create_image_view(
+        device,
+        texture,
+        vk::Format::R8G8B8A8_SRGB,
+        vk::ImageAspectFlags::COLOR,
+    )
 }
 
 pub unsafe fn transition_image_layout(

@@ -8,6 +8,7 @@ use smallvec::SmallVec;
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::geometry::Vertex;
+use crate::gfx::physical_device::PhysicalDevice;
 use crate::transform::Transform;
 
 pub unsafe fn release_resources(
@@ -18,17 +19,25 @@ pub unsafe fn release_resources(
     pipeline_layout: vk::PipelineLayout,
     descriptor_set_layout: vk::DescriptorSetLayout,
     render_pass: vk::RenderPass,
-    texture: vk::Image,
-    texture_mem: vk::DeviceMemory,
-    texture_view: vk::ImageView,
+    images: &[vk::Image],
+    image_views: &[vk::ImageView],
+    memory_allocations: &[vk::DeviceMemory],
     sampler: vk::Sampler,
 ) {
     ctx.device.device_wait_idle().unwrap();
 
     ctx.device.destroy_sampler(sampler, None);
-    ctx.device.destroy_image_view(texture_view, None);
-    ctx.device.destroy_image(texture, None);
-    ctx.device.free_memory(texture_mem, None);
+    for imv in image_views {
+        ctx.device.destroy_image_view(*imv, None);
+    }
+
+    for im in images {
+        ctx.device.destroy_image(*im, None);
+    }
+
+    for mem in memory_allocations {
+        ctx.device.free_memory(*mem, None);
+    }
 
     for (b, m) in uniforms {
         ctx.device.destroy_buffer(*b, None);
@@ -61,7 +70,8 @@ pub unsafe fn copy_to_gpu(
 }
 
 pub unsafe fn create_image(
-    ctx: &Context,
+    device: &DeviceLoader,
+    physical_device: &PhysicalDevice,
     width: u32,
     height: u32,
     format: vk::Format,
@@ -86,13 +96,16 @@ pub unsafe fn create_image(
         .samples(vk::SampleCountFlagBits::_1)
         .flags(vk::ImageCreateFlags::empty());
 
-    let device = &ctx.device;
     let image = device
         .create_image(&image_info, None)
         .expect("failed to create texture image");
 
     let mem_reqs = device.get_image_memory_requirements(image);
-    let mem_type_index = find_memory_type(ctx, mem_reqs.memory_type_bits, properties);
+    let mem_type_index = find_memory_type(
+        physical_device.memory_properties,
+        mem_reqs.memory_type_bits,
+        properties,
+    );
     let alloc_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(mem_reqs.size)
         .memory_type_index(mem_type_index);
@@ -251,7 +264,11 @@ pub unsafe fn allocate_buffer(
         .expect("Failed to create buffer");
 
     let mem_reqs = ctx.device.get_buffer_memory_requirements(buffer);
-    let mem_type = find_memory_type(ctx, mem_reqs.memory_type_bits, properties);
+    let mem_type = find_memory_type(
+        ctx.physical_device.memory_properties,
+        mem_reqs.memory_type_bits,
+        properties,
+    );
 
     let allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(mem_reqs.size)
@@ -412,14 +429,10 @@ pub unsafe fn create_index_buffer(
 }
 
 pub unsafe fn find_memory_type(
-    ctx: &Context,
+    mem_properties: vk::PhysicalDeviceMemoryProperties,
     type_filter: u32,
     properties: vk::MemoryPropertyFlags,
 ) -> u32 {
-    let mem_properties = ctx
-        .instance
-        .get_physical_device_memory_properties(ctx.physical_device.handle);
-
     for (ix, mem_type) in mem_properties.memory_types.iter().enumerate() {
         if type_filter & (1 << ix) != 0 && (properties & mem_type.property_flags) == properties {
             return ix as u32;
@@ -451,6 +464,51 @@ pub unsafe fn create_command_buffers(
     device
         .allocate_command_buffers(&cmd_buf_allocate_info)
         .expect("failed to create command buffer")
+}
+
+pub unsafe fn create_depth_buffer(
+    device: &DeviceLoader,
+    physical_device: &PhysicalDevice,
+    format: vk::Format,
+    extent: &vk::Extent2D,
+) -> (vk::Image, vk::DeviceMemory) {
+    create_image(
+        device,
+        physical_device,
+        extent.width,
+        extent.height,
+        format,
+        vk::ImageTiling::OPTIMAL,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+    )
+}
+
+fn has_stencil_component(format: vk::Format) -> bool {
+    format == vk::Format::D32_SFLOAT_S8_UINT || format == vk::Format::D32_SFLOAT_S8_UINT
+}
+
+pub unsafe fn create_image_view(
+    device: &DeviceLoader,
+    image: vk::Image,
+    format: vk::Format,
+    aspect_flags: vk::ImageAspectFlags,
+) -> vk::ImageView {
+    let image_view_info = vk::ImageViewCreateInfoBuilder::new()
+        .image(image)
+        .view_type(vk::ImageViewType::_2D)
+        .format(format)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: aspect_flags,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        });
+
+    device
+        .create_image_view(&image_view_info, None)
+        .expect("failed to create texture view")
 }
 
 impl Transform {

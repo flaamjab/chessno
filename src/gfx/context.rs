@@ -16,7 +16,6 @@ const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validati
 pub struct Context {
     pub swapchain: Swapchain,
     pub queues: Queues,
-    pub surface: vk::SurfaceKHR,
     pub device: Arc<DeviceLoader>,
     pub physical_device: PhysicalDevice,
     pub instance: Arc<InstanceLoader>,
@@ -76,11 +75,16 @@ impl Context {
 
             let PhysicalSize { width, height } = window.inner_size();
             let draw_area_size = vk::Extent2D { width, height };
-            let swapchain = Swapchain::new(&device, &physical_device, surface, &draw_area_size);
+            let swapchain = Swapchain::new(
+                &device,
+                &physical_device,
+                queues.graphics,
+                surface,
+                &draw_area_size,
+            );
 
             Self {
                 queues,
-                surface,
                 device,
                 physical_device,
                 instance,
@@ -95,11 +99,9 @@ impl Drop for Context {
     fn drop(&mut self) {
         debug!("Dropping Vulkan context");
         unsafe {
-            self.swapchain.destroy(&self.device);
+            self.swapchain.destroy(&self.device, &self.instance);
 
             self.device.destroy_device(None);
-
-            self.instance.destroy_surface_khr(self.surface, None);
 
             #[cfg(all(debug_assertions, not(target_os = "android")))]
             validation::deinit(&self.instance);
