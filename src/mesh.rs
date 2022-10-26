@@ -8,8 +8,16 @@ use crate::gfx::geometry::Vertex;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
+    pub bbox: BBox,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BBox {
+    pub width: f32,
+    pub length: f32,
+    pub height: f32,
 }
 
 impl Mesh {
@@ -23,7 +31,7 @@ impl Mesh {
                 for p in g.polys {
                     if p.0.len() == 4 {
                         indices.extend(
-                            [p.0[0], p.0[1], p.0[2], p.0[2], p.0[0], p.0[3]].map(|t| t.0 as u16),
+                            [p.0[0], p.0[1], p.0[2], p.0[0], p.0[2], p.0[3]].map(|t| t.0 as u16),
                         );
                     } else {
                         panic!("unsupported OBJ face format")
@@ -45,7 +53,15 @@ impl Mesh {
             v.uv = [t[0], t[1], 0.0];
         }
 
-        Ok(Mesh { vertices, indices })
+        Ok(Mesh {
+            vertices,
+            indices,
+            bbox: BBox {
+                width: 0.0,
+                length: 0.0,
+                height: 0.0,
+            },
+        })
     }
 
     pub fn new_plane() -> Mesh {
@@ -71,7 +87,15 @@ impl Mesh {
 
         let indices = [1, 2, 0, 2, 3, 0].to_vec();
 
-        Mesh { vertices, indices }
+        Mesh {
+            vertices,
+            indices,
+            bbox: BBox {
+                width: 1.0,
+                length: 1.0,
+                height: 0.0,
+            },
+        }
     }
 }
 

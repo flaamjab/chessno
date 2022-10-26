@@ -1,73 +1,102 @@
+use std::collections::hash_map::Entry;
 use std::ffi::CString;
+use std::{collections::HashMap, hash::Hash};
 
 use erupt::{utils, vk, DeviceLoader};
-use smallvec::SmallVec;
-use thiserror::Error as Err;
+use nalgebra::Matrix4;
 
-use crate::logging::debug;
+use crate::gfx::vulkan_resource::DeviceResource;
+
+pub enum ShaderStage {
+    Vertex,
+    Fragment,
+}
+
+impl Into<vk::ShaderStageFlagBits> for ShaderStage {
+    fn into(self) -> vk::ShaderStageFlagBits {
+        match self {
+            ShaderStage::Vertex => vk::ShaderStageFlagBits::VERTEX,
+            ShaderStage::Fragment => vk::ShaderStageFlagBits::FRAGMENT,
+        }
+    }
+}
 
 pub struct Shader {
-    modules: SmallVec<[(vk::ShaderModule, vk::ShaderStageFlagBits); 8]>,
-    entry_point: CString,
+    code: Vec<u8>,
+    stage: ShaderStage,
+}
+
+#[derive(Clone, Default)]
+pub struct ShaderParams {
+    matrices4f32: HashMap<String, Matrix4<f32>>,
+}
+
+impl ShaderParams {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn set_matrixf32(&mut self, name: &str, value: &Matrix4<f32>) {
+        self.matrices4f32.insert(name.to_string(), value.clone());
+    }
+
+    pub fn matrixf32(&self, name: &str) -> Matrix4<f32> {
+        let mut maybe_matrix = self.matrices4f32.get(name);
+        maybe_matrix.get_or_insert(&Matrix4::zeros()).clone()
+    }
 }
 
 impl Shader {
-    pub fn new(
-        device: &DeviceLoader,
-        programs: &[(&[u8], vk::ShaderStageFlagBits)],
-    ) -> Result<Shader, Error> {
-        let mut modules = SmallVec::with_capacity(programs.len());
-        for (bytes, stage) in programs {
-            let vert_decoded = utils::decode_spv(bytes).unwrap();
-            let module_info = vk::ShaderModuleCreateInfoBuilder::new().code(&vert_decoded);
-            unsafe {
-                let module = device
-                    .create_shader_module(&module_info, None)
-                    .map_err(|e| Error::from_vulkan_result(e))?;
-                modules.push((module, *stage));
-            }
+    pub fn new(code: &[u8], stage: ShaderStage) -> Self {
+        Self {
+            code: code.to_vec(),
+            stage: stage,
         }
+    }
 
-        Ok(Self {
+    pub unsafe fn into_initialized(self, device: &DeviceLoader) -> InitializedShader {
+        let shader_decoded = utils::decode_spv(&self.code).expect("failed to decode shader");
+        let module_info = vk::ShaderModuleCreateInfoBuilder::new().code(&shader_decoded);
+        let module = device
+            .create_shader_module(&module_info, None)
+            .expect("failed to create shader module");
+
+        InitializedShader {
+            module: module,
+            stage: self.stage.into(),
             entry_point: CString::new("main").unwrap(),
-            modules,
-        })
-    }
-
-    pub fn stage_infos(&self) -> SmallVec<[vk::PipelineShaderStageCreateInfoBuilder; 4]> {
-        self.modules
-            .iter()
-            .map(move |sm| {
-                vk::PipelineShaderStageCreateInfoBuilder::new()
-                    .stage(sm.1)
-                    .module(sm.0)
-                    .name(&self.entry_point)
-            })
-            .collect()
-    }
-
-    pub unsafe fn destroy(&self, device: &DeviceLoader) {
-        for (module, _) in &self.modules {
-            device.destroy_shader_module(*module, None);
+            params: Default::default(),
         }
     }
 }
-#[derive(Err, Debug)]
-pub enum Error {
-    #[error("compilation failed")]
-    CompilationError,
-    #[error("unknown error")]
-    Unknown,
+
+pub struct InitializedShader {
+    module: vk::ShaderModule,
+    stage: vk::ShaderStageFlagBits,
+    entry_point: CString,
+    params: ShaderParams,
 }
 
-impl Error {
-    fn from_vulkan_result(result: vk::Result) -> Self {
-        match result {
-            vk::Result::ERROR_INVALID_SHADER_NV => Error::CompilationError,
-            e => {
-                debug!("received {} after failing to compile shaders", e);
-                Error::Unknown
-            }
-        }
+impl InitializedShader {
+    pub fn stage_info(&self) -> vk::PipelineShaderStageCreateInfoBuilder {
+        assert!(!self.module.is_null());
+        vk::PipelineShaderStageCreateInfoBuilder::new()
+            .stage(self.stage)
+            .module(self.module)
+            .name(&self.entry_point)
+    }
+
+    pub fn params(&self) -> &ShaderParams {
+        &self.params
+    }
+
+    pub fn set_params(&mut self, params: &ShaderParams) {
+        self.params = params.clone();
+    }
+}
+
+impl DeviceResource for InitializedShader {
+    fn destroy(&self, device: &DeviceLoader) {
+        unsafe { device.destroy_shader_module(self.module, None) }
     }
 }

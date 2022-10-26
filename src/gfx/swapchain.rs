@@ -6,8 +6,8 @@ use std::{
 use erupt::{vk, DeviceLoader, InstanceLoader};
 use smallvec::SmallVec;
 
+use crate::gfx::memory;
 use crate::gfx::physical_device::PhysicalDevice;
-use crate::gfx::texture::DepthBuffer;
 use crate::logging::trace;
 
 pub struct Swapchain {
@@ -297,4 +297,46 @@ unsafe fn create_framebuffers(
             device.create_framebuffer(&framebuffer_info, None).unwrap()
         })
         .collect()
+}
+
+pub struct DepthBuffer {
+    pub memory: vk::DeviceMemory,
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+}
+
+impl DepthBuffer {
+    pub fn destroy(&self, device: &DeviceLoader) {
+        unsafe {
+            device.destroy_image_view(self.image_view, None);
+            device.destroy_image(self.image, None);
+            device.free_memory(self.memory, None);
+        }
+    }
+}
+
+impl DepthBuffer {
+    pub fn new(
+        device: &DeviceLoader,
+        physical_device: &PhysicalDevice,
+        format: vk::Format,
+        extent: &vk::Extent2D,
+    ) -> Self {
+        unsafe {
+            let (depth_buffer_image, depth_buffer_mem) =
+                memory::create_depth_buffer(device, physical_device, format, &extent);
+            let depth_buffer_view = memory::create_image_view(
+                device,
+                depth_buffer_image,
+                format,
+                vk::ImageAspectFlags::DEPTH,
+            );
+
+            Self {
+                memory: depth_buffer_mem,
+                image: depth_buffer_image,
+                image_view: depth_buffer_view,
+            }
+        }
+    }
 }

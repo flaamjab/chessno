@@ -5,12 +5,19 @@ use std::path::Path;
 use erupt::{vk, DeviceLoader};
 use image::io::Reader as ImageReader;
 use image::EncodableLayout;
+use image::RgbaImage;
 
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::memory;
 
-use super::physical_device::PhysicalDevice;
+use super::memory::create_image_view;
+
+enum TextureState {
+    Unloaded,
+    CPUOnly,
+    GPUOnly,
+}
 
 pub struct Texture {
     pub memory: vk::DeviceMemory,
@@ -18,13 +25,35 @@ pub struct Texture {
     pub image_view: vk::ImageView,
 }
 
-pub struct DepthBuffer {
-    pub memory: vk::DeviceMemory,
-    pub image: vk::Image,
-    pub image_view: vk::ImageView,
-}
+impl Texture {
+    pub fn from_file(
+        path: &Path,
+        ctx: &Context,
+        copy_queue: vk::Queue,
+        copy_queue_family: u32,
+    ) -> io::Result<Self> {
+        let pixels = load_image(path)?;
+        unsafe {
+            let (image, memory) = upload_to_gpu(
+                ctx,
+                &pixels.as_bytes(),
+                pixels.width(),
+                pixels.height(),
+                copy_queue,
+                copy_queue_family,
+            );
+            let image_view = create_texture_view(&ctx.device, image);
 
-impl DepthBuffer {
+            Ok(Self {
+                image,
+                image_view,
+                memory,
+            })
+        }
+    }
+
+    pub fn upload(&self, ctx: &Context, copy_queue: vk::Queue, copy_queue_family: u32) {}
+
     pub fn destroy(&self, device: &DeviceLoader) {
         unsafe {
             device.destroy_image_view(self.image_view, None);
@@ -34,30 +63,11 @@ impl DepthBuffer {
     }
 }
 
-impl DepthBuffer {
-    pub fn new(
-        device: &DeviceLoader,
-        physical_device: &PhysicalDevice,
-        format: vk::Format,
-        extent: &vk::Extent2D,
-    ) -> Self {
-        unsafe {
-            let (depth_buffer_image, depth_buffer_mem) =
-                memory::create_depth_buffer(device, physical_device, format, &extent);
-            let depth_buffer_view = memory::create_image_view(
-                device,
-                depth_buffer_image,
-                format,
-                vk::ImageAspectFlags::DEPTH,
-            );
-
-            Self {
-                memory: depth_buffer_mem,
-                image: depth_buffer_image,
-                image_view: depth_buffer_view,
-            }
-        }
-    }
+fn load_image(path: &Path) -> io::Result<RgbaImage> {
+    let image = ImageReader::open(path)?
+        .decode()
+        .expect("failed to decode image at {:path}");
+    Ok(image.to_rgba8())
 }
 
 pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
@@ -84,18 +94,15 @@ pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
         .expect("failed to create a texture sampler")
 }
 
-pub unsafe fn create_texture(
+unsafe fn upload_to_gpu(
     ctx: &Context,
-    path: &Path,
+    image: &[u8],
+    image_width: u32,
+    image_height: u32,
     copy_queue: vk::Queue,
     copy_queue_family: u32,
-) -> io::Result<(vk::Image, vk::DeviceMemory)> {
-    let image = ImageReader::open(path)?
-        .decode()
-        .expect("failed to decode image at {:path}");
-    let image = image.to_rgba8();
-    let image_size = image.as_bytes().len();
-
+) -> (vk::Image, vk::DeviceMemory) {
+    let image_size = image.len();
     let (staging_buf, staging_mem) = memory::allocate_buffer(
         ctx,
         image_size,
@@ -105,7 +112,7 @@ pub unsafe fn create_texture(
 
     memory::copy_to_gpu(
         &ctx.device,
-        image.as_bytes().as_ptr() as *const c_void,
+        image.as_ptr() as *const c_void,
         staging_mem,
         image_size,
     );
@@ -113,8 +120,8 @@ pub unsafe fn create_texture(
     let (texture, texture_mem) = memory::create_image(
         &ctx.device,
         &ctx.physical_device,
-        image.width(),
-        image.height(),
+        image_width,
+        image_height,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageTiling::OPTIMAL,
         vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
@@ -135,7 +142,7 @@ pub unsafe fn create_texture(
         &ctx.device,
         staging_buf,
         texture,
-        (image.width(), image.height()),
+        (image_width, image_height),
         copy_queue,
         copy_queue_family,
     );
@@ -153,7 +160,7 @@ pub unsafe fn create_texture(
     ctx.device.destroy_buffer(staging_buf, None);
     ctx.device.free_memory(staging_mem, None);
 
-    Ok((texture, texture_mem))
+    (texture, texture_mem)
 }
 
 pub unsafe fn create_texture_view(device: &DeviceLoader, texture: vk::Image) -> vk::ImageView {

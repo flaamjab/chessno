@@ -14,6 +14,7 @@ use crate::samples::PlaygroundScene;
 use crate::timer::Timer;
 
 mod camera;
+mod frame_counter;
 mod gfx;
 mod logging;
 mod mesh;

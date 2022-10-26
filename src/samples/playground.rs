@@ -28,29 +28,29 @@ pub struct PlaygroundScene {
 impl PlaygroundScene {
     pub fn new(aspect_ratio: f32) -> Self {
         let up = Vector3::y_axis();
-        let cube = Mesh::from_file(Path::new("assets/models/cube.obj")).unwrap();
+        let cell = Mesh::new_plane();
         let plant = Mesh::from_file(Path::new("assets/models/indoor plant_02.obj")).unwrap();
-        let objects = vec![
-            Object {
-                mesh: cube.clone(),
-                transform: Transform::new(
-                    Vector3::new(3.0, 1.0, 3.0),
-                    Vector4::new(0.0, 1.0, 0.0, 30.0),
-                ),
-            },
-            Object {
-                mesh: cube.clone(),
-                transform: Transform::new(Vector3::new(0.0, 0.0, -1.0), Vector4::zeros()),
-            },
-            Object {
-                mesh: cube.clone(),
-                transform: Transform::new(Vector3::new(-5.0, 0.0, -5.0), Vector4::zeros()),
-            },
-            Object {
-                mesh: plant,
-                transform: Transform::new(Vector3::new(-2.0, 2.0, 2.0), Vector4::zeros()),
-            },
-        ];
+
+        let mut objects = Vec::with_capacity(17);
+        objects.push(Object {
+            mesh: plant,
+            transform: Transform::new(Vector3::new(-2.0, 2.0, 2.0), Vector4::zeros()),
+        });
+
+        let cell_w = cell.bbox.width;
+        let cell_l = cell.bbox.length;
+        for row in 0..8 {
+            for col in 0..8 {
+                let o = Object {
+                    mesh: cell.clone(),
+                    transform: Transform {
+                        position: Vector3::new(cell_w * row as f32, 0.0, cell_l * col as f32),
+                        rotation: Vector4::new(1.0, 0.0, 0.0, 90.0),
+                    },
+                };
+                objects.push(o);
+            }
+        }
 
         let camera_pos = Point3::new(0.0, -1.0, -2.0);
         let camera_dir = Unit::new_normalize(-camera_pos.coords);

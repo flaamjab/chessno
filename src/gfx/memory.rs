@@ -19,25 +19,11 @@ pub unsafe fn release_resources(
     pipeline_layout: vk::PipelineLayout,
     descriptor_set_layout: vk::DescriptorSetLayout,
     render_pass: vk::RenderPass,
-    images: &[vk::Image],
-    image_views: &[vk::ImageView],
-    memory_allocations: &[vk::DeviceMemory],
     sampler: vk::Sampler,
 ) {
     ctx.device.device_wait_idle().unwrap();
 
     ctx.device.destroy_sampler(sampler, None);
-    for imv in image_views {
-        ctx.device.destroy_image_view(*imv, None);
-    }
-
-    for im in images {
-        ctx.device.destroy_image(*im, None);
-    }
-
-    for mem in memory_allocations {
-        ctx.device.free_memory(*mem, None);
-    }
 
     for (b, m) in uniforms {
         ctx.device.destroy_buffer(*b, None);
@@ -125,7 +111,8 @@ pub unsafe fn create_descriptor_sets(
     pool: vk::DescriptorPool,
     layouts: &[vk::DescriptorSetLayout],
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    texture: (vk::ImageView, vk::Sampler),
+    texture_view: vk::ImageView,
+    sampler: vk::Sampler,
     frames_in_flight: usize,
 ) -> Vec<vk::DescriptorSet> {
     let alloc_info = vk::DescriptorSetAllocateInfoBuilder::new()
@@ -144,9 +131,9 @@ pub unsafe fn create_descriptor_sets(
             .range(size_of::<Transform>() as u64);
 
         let image_info = vk::DescriptorImageInfoBuilder::new()
-            .image_view(texture.0)
+            .image_view(texture_view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .sampler(texture.1);
+            .sampler(sampler);
 
         let buffer_infos = [buffer_info];
         let image_infos = [image_info];

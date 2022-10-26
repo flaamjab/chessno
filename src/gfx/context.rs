@@ -58,7 +58,6 @@ impl Context {
             let device_extensions = [vk::KHR_SWAPCHAIN_EXTENSION_NAME];
             let physical_device = PhysicalDevice::new(&instance, surface, &device_extensions);
 
-            #[cfg(debug_assertions)]
             let device =
                 create_logical_device(&instance, &physical_device, &device_extensions, &layers);
 
