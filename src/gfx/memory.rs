@@ -11,6 +11,11 @@ use crate::gfx::geometry::Vertex;
 use crate::gfx::physical_device::PhysicalDevice;
 use crate::transform::Transform;
 
+pub struct UniformBuffer {
+    memory: vk::DeviceMemory,
+    handle: vk::Buffer,
+}
+
 pub unsafe fn release_resources(
     ctx: &mut Context,
     uniforms: &[(vk::Buffer, vk::DeviceMemory)],
@@ -105,6 +110,8 @@ pub unsafe fn create_image(
 
     (image, mem)
 }
+
+pub unsafe fn create_texture_descriptor_set(device: &DeviceLoader, pool: vk::DescriptorPool) {}
 
 pub unsafe fn create_descriptor_sets(
     device: &DeviceLoader,
@@ -225,7 +232,8 @@ pub unsafe fn create_uniform_buffers(
     (0..count)
         .map(|_| {
             allocate_buffer(
-                ctx,
+                &ctx.device,
+                &ctx.physical_device,
                 size,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -235,7 +243,8 @@ pub unsafe fn create_uniform_buffers(
 }
 
 pub unsafe fn allocate_buffer(
-    ctx: &Context,
+    device: &DeviceLoader,
+    physical_device: &PhysicalDevice,
     size: usize,
     usage: vk::BufferUsageFlags,
     properties: vk::MemoryPropertyFlags,
@@ -245,14 +254,13 @@ pub unsafe fn allocate_buffer(
         .usage(usage)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
-    let buffer = ctx
-        .device
+    let buffer = device
         .create_buffer(&buffer_info, None)
         .expect("Failed to create buffer");
 
-    let mem_reqs = ctx.device.get_buffer_memory_requirements(buffer);
+    let mem_reqs = device.get_buffer_memory_requirements(buffer);
     let mem_type = find_memory_type(
-        ctx.physical_device.memory_properties,
+        physical_device.memory_properties,
         mem_reqs.memory_type_bits,
         properties,
     );
@@ -260,12 +268,11 @@ pub unsafe fn allocate_buffer(
     let allocate_info = vk::MemoryAllocateInfoBuilder::new()
         .allocation_size(mem_reqs.size)
         .memory_type_index(mem_type);
-    let buffer_memory = ctx
-        .device
+    let buffer_memory = device
         .allocate_memory(&allocate_info, None)
         .expect("Failed to allocate memory for vertex buffer");
 
-    ctx.device
+    device
         .bind_buffer_memory(buffer, buffer_memory, 0)
         .expect("Failed to bind memory");
 
@@ -280,7 +287,8 @@ pub unsafe fn create_vertex_buffer(
 ) -> (vk::Buffer, vk::DeviceMemory) {
     let size = size_of_val(&vertices[0]) * vertices.len();
     let (staging_buf, staging_mem) = allocate_buffer(
-        ctx,
+        &ctx.device,
+        &ctx.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -294,7 +302,8 @@ pub unsafe fn create_vertex_buffer(
     );
 
     let (vertex_buf, vertex_mem) = allocate_buffer(
-        ctx,
+        &ctx.device,
+        &ctx.physical_device,
         size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -380,7 +389,8 @@ pub unsafe fn create_index_buffer(
     let buf_size = size_of_val(&indices[0]) * indices.len();
 
     let (staging_buf, staging_mem) = allocate_buffer(
-        ctx,
+        &ctx.device,
+        &ctx.physical_device,
         buf_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE,
@@ -394,7 +404,8 @@ pub unsafe fn create_index_buffer(
     );
 
     let (index_buf, index_mem) = allocate_buffer(
-        ctx,
+        &ctx.device,
+        &ctx.physical_device,
         buf_size,
         vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,

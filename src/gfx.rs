@@ -8,6 +8,6 @@ mod shader;
 mod spatial;
 mod swapchain;
 mod sync_pool;
-mod texture;
+pub mod texture;
 mod validation;
 mod vulkan_resource;

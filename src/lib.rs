@@ -18,6 +18,7 @@ mod frame_counter;
 mod gfx;
 mod logging;
 mod mesh;
+mod obj_loader;
 mod object;
 mod samples;
 mod scene;

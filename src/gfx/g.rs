@@ -1,10 +1,6 @@
-use std::ffi::c_void;
-use std::mem::size_of;
-
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 
 use crate::gfx::context::Context;
-use crate::gfx::spatial::Spatial;
 
 pub unsafe fn begin_once_commands(
     device: &DeviceLoader,

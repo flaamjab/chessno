@@ -1,19 +1,28 @@
-use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self};
 use std::path::Path;
 
-use obj::{ObjData, ObjError};
+use obj::ObjError;
 
 use crate::gfx::geometry::Vertex;
+use crate::gfx::texture::Texture;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
-    pub bbox: BBox,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
+    pub submeshes: Vec<Submesh>,
+    pub bbox: BBox,
 }
 
 #[derive(Clone, Debug)]
+pub struct Submesh {
+    pub texture: Texture,
+    pub start_index: usize,
+    pub end_index: usize,
+    pub bbox: BBox,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct BBox {
     pub width: f32,
     pub length: f32,
@@ -21,49 +30,6 @@ pub struct BBox {
 }
 
 impl Mesh {
-    pub fn from_file(path: &Path) -> Result<Mesh, Error> {
-        let reader = BufReader::new(File::open(path)?);
-        let obj = ObjData::load_buf(reader)?;
-
-        let mut indices = Vec::with_capacity(obj.position.len());
-        for o in obj.objects {
-            for g in o.groups {
-                for p in g.polys {
-                    if p.0.len() == 4 {
-                        indices.extend(
-                            [p.0[0], p.0[1], p.0[2], p.0[0], p.0[2], p.0[3]].map(|t| t.0 as u16),
-                        );
-                    } else {
-                        panic!("unsupported OBJ face format")
-                    }
-                }
-            }
-        }
-
-        let mut vertices: Vec<_> = obj
-            .position
-            .iter()
-            .map(|p| Vertex {
-                pos: [p[0], p[1], p[2]],
-                uv: [0.0; 3],
-            })
-            .collect();
-
-        for (v, t) in vertices.iter_mut().zip(obj.texture) {
-            v.uv = [t[0], t[1], 0.0];
-        }
-
-        Ok(Mesh {
-            vertices,
-            indices,
-            bbox: BBox {
-                width: 0.0,
-                length: 0.0,
-                height: 0.0,
-            },
-        })
-    }
-
     pub fn new_plane() -> Mesh {
         let vertices = [
             Vertex {
@@ -87,14 +53,25 @@ impl Mesh {
 
         let indices = [1, 2, 0, 2, 3, 0].to_vec();
 
+        let bbox = BBox {
+            width: 1.0,
+            length: 1.0,
+            height: 0.0,
+        };
+
+        let texture = Texture::from_file(Path::new("assets/textures/missing.png"))
+            .expect("failed to load missing texture");
+        let n_indices = indices.len();
         Mesh {
             vertices,
             indices,
-            bbox: BBox {
-                width: 1.0,
-                length: 1.0,
-                height: 0.0,
-            },
+            bbox: bbox.clone(),
+            submeshes: vec![Submesh {
+                bbox,
+                start_index: 0,
+                end_index: n_indices,
+                texture,
+            }],
         }
     }
 }
@@ -114,18 +91,5 @@ impl From<io::Error> for Error {
 impl From<ObjError> for Error {
     fn from(e: ObjError) -> Self {
         Error::ObjError(e)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_model_loads_successfully() {
-        let path = Path::new("assets/models/Clock_obj.obj");
-        let mesh = Mesh::from_file(path).expect("failed to load model");
-
-        println!("{:?}", mesh)
     }
 }

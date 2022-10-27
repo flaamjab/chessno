@@ -6,6 +6,7 @@ use winit::event::VirtualKeyCode;
 
 use crate::camera::Camera;
 use crate::mesh::Mesh;
+use crate::obj_loader::ObjLoader;
 use crate::object::Object;
 use crate::scene::DynamicScene;
 use crate::scene::Scene;
@@ -29,7 +30,8 @@ impl PlaygroundScene {
     pub fn new(aspect_ratio: f32) -> Self {
         let up = Vector3::y_axis();
         let cell = Mesh::new_plane();
-        let plant = Mesh::from_file(Path::new("assets/models/indoor plant_02.obj")).unwrap();
+        let mesh_loader = ObjLoader::new();
+        let plant = mesh_loader.load_from_file(Path::new("assets/models/indoor plant_02.obj"));
 
         let mut objects = Vec::with_capacity(17);
         objects.push(Object {

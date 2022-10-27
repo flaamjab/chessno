@@ -1,4 +1,7 @@
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_void;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io;
 use std::path::Path;
 
@@ -11,7 +14,8 @@ use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::memory;
 
-use super::memory::create_image_view;
+use super::physical_device::PhysicalDevice;
+use super::vulkan_resource::DeviceResource;
 
 enum TextureState {
     Unloaded,
@@ -19,42 +23,21 @@ enum TextureState {
     GPUOnly,
 }
 
+#[derive(Clone, Debug)]
 pub struct Texture {
+    id: u64,
+    image: RgbaImage,
+}
+
+pub struct GpuResidentTexture {
+    id: u64,
     pub memory: vk::DeviceMemory,
     pub image: vk::Image,
     pub image_view: vk::ImageView,
 }
 
-impl Texture {
-    pub fn from_file(
-        path: &Path,
-        ctx: &Context,
-        copy_queue: vk::Queue,
-        copy_queue_family: u32,
-    ) -> io::Result<Self> {
-        let pixels = load_image(path)?;
-        unsafe {
-            let (image, memory) = upload_to_gpu(
-                ctx,
-                &pixels.as_bytes(),
-                pixels.width(),
-                pixels.height(),
-                copy_queue,
-                copy_queue_family,
-            );
-            let image_view = create_texture_view(&ctx.device, image);
-
-            Ok(Self {
-                image,
-                image_view,
-                memory,
-            })
-        }
-    }
-
-    pub fn upload(&self, ctx: &Context, copy_queue: vk::Queue, copy_queue_family: u32) {}
-
-    pub fn destroy(&self, device: &DeviceLoader) {
+impl DeviceResource for GpuResidentTexture {
+    fn destroy(&self, device: &DeviceLoader) {
         unsafe {
             device.destroy_image_view(self.image_view, None);
             device.destroy_image(self.image, None);
@@ -63,11 +46,44 @@ impl Texture {
     }
 }
 
-fn load_image(path: &Path) -> io::Result<RgbaImage> {
-    let image = ImageReader::open(path)?
-        .decode()
-        .expect("failed to decode image at {:path}");
-    Ok(image.to_rgba8())
+impl Texture {
+    pub fn from_file(path: &Path) -> io::Result<Self> {
+        let mut hasher = DefaultHasher::new();
+        path.canonicalize().unwrap().hash(&mut hasher);
+        let id = hasher.finish();
+
+        let image = ImageReader::open(path)?
+            .decode()
+            .expect("failed to decode image at {:path}");
+        Ok(Self {
+            id,
+            image: image.to_rgba8(),
+        })
+    }
+
+    pub unsafe fn load(&self, ctx: &Context) -> GpuResidentTexture {
+        let (image, memory) = upload_to_gpu(
+            &ctx.device,
+            &ctx.physical_device,
+            &self.image.as_bytes(),
+            self.image.width(),
+            self.image.height(),
+            ctx.queues.graphics,
+            ctx.physical_device.queue_families.graphics,
+        );
+        let image_view = create_texture_view(&ctx.device, image);
+
+        GpuResidentTexture {
+            id: self.id,
+            image,
+            image_view,
+            memory,
+        }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
 }
 
 pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
@@ -95,7 +111,8 @@ pub unsafe fn create_sampler(ctx: &Context) -> vk::Sampler {
 }
 
 unsafe fn upload_to_gpu(
-    ctx: &Context,
+    device: &DeviceLoader,
+    physical_device: &PhysicalDevice,
     image: &[u8],
     image_width: u32,
     image_height: u32,
@@ -104,22 +121,23 @@ unsafe fn upload_to_gpu(
 ) -> (vk::Image, vk::DeviceMemory) {
     let image_size = image.len();
     let (staging_buf, staging_mem) = memory::allocate_buffer(
-        ctx,
+        device,
+        physical_device,
         image_size,
         vk::BufferUsageFlags::TRANSFER_SRC,
         vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
     );
 
     memory::copy_to_gpu(
-        &ctx.device,
+        &device,
         image.as_ptr() as *const c_void,
         staging_mem,
         image_size,
     );
 
     let (texture, texture_mem) = memory::create_image(
-        &ctx.device,
-        &ctx.physical_device,
+        device,
+        physical_device,
         image_width,
         image_height,
         vk::Format::R8G8B8A8_SRGB,
@@ -129,7 +147,7 @@ unsafe fn upload_to_gpu(
     );
 
     transition_image_layout(
-        &ctx.device,
+        device,
         texture,
         vk::Format::R8G8B8A8_SRGB,
         vk::ImageLayout::UNDEFINED,
@@ -139,7 +157,7 @@ unsafe fn upload_to_gpu(
     );
 
     memory::copy_buffer_to_image(
-        &ctx.device,
+        device,
         staging_buf,
         texture,
         (image_width, image_height),
@@ -148,7 +166,7 @@ unsafe fn upload_to_gpu(
     );
 
     transition_image_layout(
-        &ctx.device,
+        device,
         texture,
         vk::Format::R8G8B8A8_SNORM,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -157,8 +175,8 @@ unsafe fn upload_to_gpu(
         copy_queue,
     );
 
-    ctx.device.destroy_buffer(staging_buf, None);
-    ctx.device.free_memory(staging_mem, None);
+    device.destroy_buffer(staging_buf, None);
+    device.free_memory(staging_mem, None);
 
     (texture, texture_mem)
 }

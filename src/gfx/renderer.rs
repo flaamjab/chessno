@@ -1,29 +1,27 @@
-use std::ffi::c_void;
+use std::collections::hash_map::Entry;
+use std::hash::Hash;
 use std::mem::size_of;
 use std::path::Path;
+use std::{collections::HashMap, ffi::c_void};
 
 use erupt::vk;
 use smallvec::{SmallVec, ToSmallVec};
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::gfx::{
+    context::Context,
+    g,
+    geometry::{Geometry, Vertex},
+    memory,
+    shader::{Shader, ShaderStage},
+    spatial::Spatial,
+    sync_pool::SyncPool,
+    texture::{self, GpuResidentTexture, Texture},
+    vulkan_resource::DeviceResource,
+};
 use crate::scene::Scenelike;
 use crate::transform::Transform;
-use crate::{
-    frame_counter,
-    gfx::{
-        context::Context,
-        g,
-        geometry::{Geometry, Vertex},
-        memory,
-        shader::{Shader, ShaderStage},
-        spatial::Spatial,
-        sync_pool::SyncPool,
-        texture::{self, Texture},
-    },
-};
-
-use super::vulkan_resource::DeviceResource;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
 const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
@@ -38,6 +36,8 @@ pub struct Renderer {
     resources: Resources,
     resize_required: bool,
     cmd_pool: vk::CommandPool,
+
+    textures: HashMap<u64, GpuResidentTexture>,
 
     new_size: vk::Extent2D,
 }
@@ -79,6 +79,7 @@ impl Renderer {
                 frames_in_flight,
                 frame_number: 0,
                 resources,
+                textures: HashMap::new(),
                 resize_required: false,
                 new_size: vk::Extent2D::default(),
             }
@@ -121,60 +122,64 @@ impl Renderer {
         let mut free_queue = Vec::with_capacity(objects.len());
         for o in objects {
             unsafe {
-                let mut geometry = Geometry::new();
-                geometry.push_mesh(&o.mesh);
-
                 let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
                     &self.ctx,
-                    geometry.vertices(),
+                    &o.mesh.vertices,
                     copy_queue_family,
                     copy_queue,
                 );
-
-                let (index_buf, index_mem) = memory::create_index_buffer(
-                    &self.ctx,
-                    geometry.indices(),
-                    copy_queue_family,
-                    copy_queue,
-                );
-
                 free_queue.push((vertex_buf, vertex_mem));
-                free_queue.push((index_buf, index_mem));
 
-                let mvp = Spatial(camera.matrix() * o.transform.matrix());
+                for sm in &o.mesh.submeshes {
+                    self.textures
+                        .entry(sm.texture.id())
+                        .or_insert(sm.texture.load(&self.ctx));
+                    let m = &o.mesh;
+                    let indices = &m.indices[sm.start_index..sm.end_index];
+                    let (index_buf, index_mem) = memory::create_index_buffer(
+                        &self.ctx,
+                        &indices,
+                        copy_queue_family,
+                        copy_queue,
+                    );
 
-                let device = &self.ctx.device;
-                let cmd_buf = self.current_frame().cmd_buf;
+                    free_queue.push((index_buf, index_mem));
 
-                // memory::upload_uniform_buffers(&device, &mvp, uniform_mem);
+                    let mvp = Spatial(camera.matrix() * o.transform.matrix());
 
-                self.ctx.device.cmd_bind_pipeline(
-                    cmd_buf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.resources.pipeline.handle,
-                );
+                    let device = &self.ctx.device;
+                    let cmd_buf = self.current_frame().cmd_buf;
 
-                device.cmd_bind_vertex_buffers(cmd_buf, 0, &[vertex_buf], &[0]);
-                device.cmd_bind_index_buffer(cmd_buf, index_buf, 0, vk::IndexType::UINT16);
+                    // memory::upload_uniform_buffers(&device, &mvp, uniform_mem);
 
-                device.cmd_push_constants(
-                    cmd_buf,
-                    self.resources.pipeline.layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    size_of::<Spatial>() as _,
-                    &mvp as *const Spatial as *const c_void,
-                );
+                    self.ctx.device.cmd_bind_pipeline(
+                        cmd_buf,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.resources.pipeline.handle,
+                    );
 
-                device.cmd_bind_descriptor_sets(
-                    cmd_buf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    self.resources.pipeline.layout,
-                    0,
-                    &[self.resources.descriptor_sets[self.frame_number]],
-                    &[],
-                );
-                device.cmd_draw_indexed(cmd_buf, geometry.indices().len() as u32, 1, 0, 0, 0);
+                    device.cmd_bind_vertex_buffers(cmd_buf, 0, &[vertex_buf], &[0]);
+                    device.cmd_bind_index_buffer(cmd_buf, index_buf, 0, vk::IndexType::UINT16);
+
+                    device.cmd_push_constants(
+                        cmd_buf,
+                        self.resources.pipeline.layout,
+                        vk::ShaderStageFlags::VERTEX,
+                        0,
+                        size_of::<Spatial>() as _,
+                        &mvp as *const Spatial as *const c_void,
+                    );
+
+                    device.cmd_bind_descriptor_sets(
+                        cmd_buf,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        self.resources.pipeline.layout,
+                        0,
+                        &[self.resources.descriptor_sets[self.frame_number]],
+                        &[],
+                    );
+                    device.cmd_draw_indexed(cmd_buf, indices.len() as _, 1, 0, 0, 0);
+                }
             }
         }
 
@@ -251,7 +256,7 @@ struct Resources {
     render_pass: vk::RenderPass,
     descriptor_pool: vk::DescriptorPool,
     sampler: vk::Sampler,
-    texture: Texture,
+    texture: GpuResidentTexture,
     uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
     descriptor_set_layouts: SmallVec<[vk::DescriptorSetLayout; 2]>,
     descriptor_sets: SmallVec<[vk::DescriptorSet; 2]>,
@@ -279,13 +284,10 @@ impl Resources {
             let descriptor_pool = memory::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
             let texture_path = Path::new("./assets/textures/missing.png");
-            let texture = Texture::from_file(
-                texture_path,
-                ctx,
-                ctx.queues.graphics,
-                ctx.physical_device.queue_families.graphics,
-            )
-            .expect("failed to create texture");
+            let texture = Texture::from_file(texture_path)
+                .expect("failed to create texture")
+                .load(ctx);
+
             let sampler = texture::create_sampler(&ctx);
 
             let descriptor_set_layout = memory::create_descriptor_set_layout(&ctx);
