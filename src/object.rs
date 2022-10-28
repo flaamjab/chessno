@@ -1,6 +1,6 @@
-use crate::{mesh::Mesh, transform::Transform};
+use crate::{assets::AssetId, gfx::mesh::Mesh, transform::Transform};
 
 pub struct Object {
-    pub mesh: Mesh,
+    pub mesh_id: AssetId,
     pub transform: Transform,
 }

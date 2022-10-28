@@ -1,7 +1,4 @@
-use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_void;
-use std::hash::Hash;
-use std::hash::Hasher;
 use std::io;
 use std::path::Path;
 
@@ -10,6 +7,8 @@ use image::io::Reader as ImageReader;
 use image::EncodableLayout;
 use image::RgbaImage;
 
+use crate::assets::generate_id;
+use crate::assets::{Asset, AssetId};
 use crate::gfx::context::Context;
 use crate::gfx::g;
 use crate::gfx::memory;
@@ -25,12 +24,18 @@ enum TextureState {
 
 #[derive(Clone, Debug)]
 pub struct Texture {
-    id: u64,
+    id: AssetId,
     image: RgbaImage,
 }
 
+impl Asset for Texture {
+    fn id(&self) -> AssetId {
+        self.id
+    }
+}
+
 pub struct GpuResidentTexture {
-    id: u64,
+    id: AssetId,
     pub memory: vk::DeviceMemory,
     pub image: vk::Image,
     pub image_view: vk::ImageView,
@@ -48,13 +53,10 @@ impl DeviceResource for GpuResidentTexture {
 
 impl Texture {
     pub fn from_file(path: &Path) -> io::Result<Self> {
-        let mut hasher = DefaultHasher::new();
-        path.canonicalize().unwrap().hash(&mut hasher);
-        let id = hasher.finish();
-
         let image = ImageReader::open(path)?
             .decode()
             .expect("failed to decode image at {:path}");
+        let id = generate_id();
         Ok(Self {
             id,
             image: image.to_rgba8(),
@@ -79,10 +81,6 @@ impl Texture {
             image_view,
             memory,
         }
-    }
-
-    pub fn id(&self) -> u64 {
-        self.id
     }
 }
 

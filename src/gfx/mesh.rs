@@ -1,22 +1,26 @@
-use std::io::{self};
+use std::collections::HashSet;
+use std::io;
 use std::path::Path;
 
 use obj::ObjError;
 
+use crate::assets::{generate_id, Asset, AssetId, Assets, MISSING_TEXTURE};
 use crate::gfx::geometry::Vertex;
 use crate::gfx::texture::Texture;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
+    pub id: AssetId,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
+    pub textures: HashSet<AssetId>,
     pub submeshes: Vec<Submesh>,
     pub bbox: BBox,
 }
 
 #[derive(Clone, Debug)]
 pub struct Submesh {
-    pub texture: Texture,
+    pub texture_id: AssetId,
     pub start_index: usize,
     pub end_index: usize,
     pub bbox: BBox,
@@ -29,8 +33,14 @@ pub struct BBox {
     pub height: f32,
 }
 
+impl Asset for Mesh {
+    fn id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl Mesh {
-    pub fn new_plane() -> Mesh {
+    pub fn new_plane(name: &str, assets: &mut Assets) -> AssetId {
         let vertices = [
             Vertex {
                 pos: [-0.5, -0.5, 0.0],
@@ -59,20 +69,24 @@ impl Mesh {
             height: 0.0,
         };
 
-        let texture = Texture::from_file(Path::new("assets/textures/missing.png"))
-            .expect("failed to load missing texture");
         let n_indices = indices.len();
-        Mesh {
+        let mesh_id = generate_id();
+        let mesh = Mesh {
+            id: mesh_id,
             vertices,
             indices,
             bbox: bbox.clone(),
+            textures: HashSet::new(),
             submeshes: vec![Submesh {
                 bbox,
                 start_index: 0,
                 end_index: n_indices,
-                texture,
+                texture_id: assets.id_of(MISSING_TEXTURE).unwrap(),
             }],
-        }
+        };
+        assets.insert_mesh(name, mesh);
+
+        mesh_id
     }
 }
 

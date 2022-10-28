@@ -3,7 +3,7 @@ use std::mem::size_of;
 use erupt::vk;
 use memoffset::offset_of;
 
-use crate::mesh::Mesh;
+use crate::gfx::mesh::Mesh;
 
 #[repr(C)]
 #[derive(Clone, Debug)]

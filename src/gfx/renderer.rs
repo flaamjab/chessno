@@ -1,18 +1,18 @@
 use std::collections::hash_map::Entry;
-use std::hash::Hash;
 use std::mem::size_of;
 use std::path::Path;
 use std::{collections::HashMap, ffi::c_void};
 
 use erupt::vk;
-use smallvec::{SmallVec, ToSmallVec};
+use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::assets::{Asset, AssetId};
 use crate::gfx::{
     context::Context,
-    g,
-    geometry::{Geometry, Vertex},
+    descriptor as ds, g,
+    geometry::Vertex,
     memory,
     shader::{Shader, ShaderStage},
     spatial::Spatial,
@@ -37,7 +37,8 @@ pub struct Renderer {
     resize_required: bool,
     cmd_pool: vk::CommandPool,
 
-    textures: HashMap<u64, GpuResidentTexture>,
+    textures: HashMap<AssetId, GpuResidentTexture>,
+    global_descriptor_set: vk::DescriptorSet,
 
     new_size: vk::Extent2D,
 }
@@ -71,18 +72,36 @@ impl Renderer {
                 .collect();
 
             let resources = Resources::new(&ctx);
-
             Self {
                 ctx,
                 sync_pool,
                 cmd_pool,
                 frames_in_flight,
                 frame_number: 0,
+                global_descriptor_set: vk::DescriptorSet::null(),
                 resources,
                 textures: HashMap::new(),
                 resize_required: false,
                 new_size: vk::Extent2D::default(),
             }
+        }
+    }
+
+    pub fn use_textures(&mut self, textures: &[Texture]) {
+        unsafe {
+            for t in textures {
+                if !self.textures.contains_key(&t.id()) {
+                    self.textures.insert(t.id(), t.load(&self.ctx));
+                }
+            }
+
+            let textures: SmallVec<[&GpuResidentTexture; 16]> = self.textures.values().collect();
+            self.global_descriptor_set = ds::global_textures_descriptor_set(
+                &self.ctx.device,
+                self.resources.descriptor_pool,
+                self.resources.global_descriptor_set_layout,
+                &textures,
+            );
         }
     }
 
@@ -119,23 +138,29 @@ impl Renderer {
 
         let objects = scene.objects();
         let camera = scene.active_camera();
+        let assets = scene.assets();
         let mut free_queue = Vec::with_capacity(objects.len());
         for o in objects {
+            let mesh = assets
+                .get_mesh_by_id(o.mesh_id)
+                .expect("failed to fetch mesh that is supposed to be loaded");
             unsafe {
                 let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
                     &self.ctx,
-                    &o.mesh.vertices,
+                    &mesh.vertices,
                     copy_queue_family,
                     copy_queue,
                 );
                 free_queue.push((vertex_buf, vertex_mem));
 
-                for sm in &o.mesh.submeshes {
-                    self.textures
-                        .entry(sm.texture.id())
-                        .or_insert(sm.texture.load(&self.ctx));
-                    let m = &o.mesh;
-                    let indices = &m.indices[sm.start_index..sm.end_index];
+                for sm in &mesh.submeshes {
+                    if let Entry::Vacant(e) = self.textures.entry(sm.texture_id) {
+                        let t = assets
+                            .get_texture_by_id(sm.texture_id)
+                            .expect("failed to fetch texture that is supposed to be available");
+                        e.insert(t.load(&self.ctx));
+                    }
+                    let indices = &mesh.indices[sm.start_index..sm.end_index];
                     let (index_buf, index_mem) = memory::create_index_buffer(
                         &self.ctx,
                         &indices,
@@ -175,7 +200,7 @@ impl Renderer {
                         vk::PipelineBindPoint::GRAPHICS,
                         self.resources.pipeline.layout,
                         0,
-                        &[self.resources.descriptor_sets[self.frame_number]],
+                        &[self.global_descriptor_set],
                         &[],
                     );
                     device.cmd_draw_indexed(cmd_buf, indices.len() as _, 1, 0, 0, 0);
@@ -234,6 +259,9 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
+            for t in self.textures.values() {
+                t.destroy(&self.ctx.device);
+            }
             self.resources.destroy(&mut self.ctx);
             self.ctx.device.destroy_command_pool(self.cmd_pool, None);
             self.sync_pool.destroy_all(&self.ctx.device);
@@ -256,10 +284,8 @@ struct Resources {
     render_pass: vk::RenderPass,
     descriptor_pool: vk::DescriptorPool,
     sampler: vk::Sampler,
-    texture: GpuResidentTexture,
     uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
-    descriptor_set_layouts: SmallVec<[vk::DescriptorSetLayout; 2]>,
-    descriptor_sets: SmallVec<[vk::DescriptorSet; 2]>,
+    global_descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline: Pipeline,
 }
 
@@ -281,27 +307,12 @@ impl Resources {
 
             let uniforms =
                 memory::create_uniform_buffers(&ctx, size_of::<Transform>(), FRAMES_IN_FLIGHT);
-            let descriptor_pool = memory::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
-
-            let texture_path = Path::new("./assets/textures/missing.png");
-            let texture = Texture::from_file(texture_path)
-                .expect("failed to create texture")
-                .load(ctx);
+            let descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
             let sampler = texture::create_sampler(&ctx);
 
-            let descriptor_set_layout = memory::create_descriptor_set_layout(&ctx);
-            let descriptor_set_layouts = [descriptor_set_layout; 2];
-
-            let descriptor_sets = memory::create_descriptor_sets(
-                &ctx.device,
-                descriptor_pool,
-                &descriptor_set_layouts,
-                &uniforms,
-                texture.image_view,
-                sampler,
-                FRAMES_IN_FLIGHT,
-            );
+            let global_descriptor_set_layout =
+                ds::descriptor_set_layout_16_textures(&ctx.device, 0);
 
             let vertex_binding_descs = [Vertex::binding_desc()];
             let vertex_attribute_descs = Vertex::attribute_descs();
@@ -311,7 +322,7 @@ impl Resources {
                 &shader_stages,
                 &vertex_binding_descs,
                 &vertex_attribute_descs,
-                &descriptor_set_layouts,
+                &[global_descriptor_set_layout],
             );
 
             drop(shader_stages);
@@ -320,10 +331,8 @@ impl Resources {
 
             Self {
                 descriptor_pool,
-                descriptor_set_layouts: descriptor_set_layouts.to_smallvec(),
-                descriptor_sets: descriptor_sets.to_smallvec(),
+                global_descriptor_set_layout,
                 render_pass,
-                texture,
                 pipeline,
                 uniforms,
                 sampler,
@@ -332,14 +341,13 @@ impl Resources {
     }
 
     pub unsafe fn destroy(&mut self, ctx: &mut Context) {
-        self.texture.destroy(&ctx.device);
         memory::release_resources(
             ctx,
             &self.uniforms,
             self.descriptor_pool,
             self.pipeline.handle,
             self.pipeline.layout,
-            self.descriptor_set_layouts[0],
+            &[self.global_descriptor_set_layout],
             self.render_pass,
             self.sampler,
         )

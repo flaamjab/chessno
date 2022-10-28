@@ -22,7 +22,7 @@ pub unsafe fn release_resources(
     descriptor_pool: vk::DescriptorPool,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_set_layouts: &[vk::DescriptorSetLayout],
     render_pass: vk::RenderPass,
     sampler: vk::Sampler,
 ) {
@@ -43,8 +43,9 @@ pub unsafe fn release_resources(
 
     ctx.device.destroy_pipeline_layout(pipeline_layout, None);
 
-    ctx.device
-        .destroy_descriptor_set_layout(descriptor_set_layout, None);
+    for &layout in descriptor_set_layouts {
+        ctx.device.destroy_descriptor_set_layout(layout, None);
+    }
 }
 
 pub unsafe fn copy_to_gpu(
@@ -109,104 +110,6 @@ pub unsafe fn create_image(
         .expect("failed to bind image memory");
 
     (image, mem)
-}
-
-pub unsafe fn create_texture_descriptor_set(device: &DeviceLoader, pool: vk::DescriptorPool) {}
-
-pub unsafe fn create_descriptor_sets(
-    device: &DeviceLoader,
-    pool: vk::DescriptorPool,
-    layouts: &[vk::DescriptorSetLayout],
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    texture_view: vk::ImageView,
-    sampler: vk::Sampler,
-    frames_in_flight: usize,
-) -> Vec<vk::DescriptorSet> {
-    let alloc_info = vk::DescriptorSetAllocateInfoBuilder::new()
-        .descriptor_pool(pool)
-        .set_layouts(layouts);
-
-    let descriptor_sets = device
-        .allocate_descriptor_sets(&alloc_info)
-        .expect("failed to allocate descriptor sets")
-        .to_vec();
-
-    for ix in 0..frames_in_flight {
-        let buffer_info = vk::DescriptorBufferInfoBuilder::new()
-            .buffer(uniforms[ix].0)
-            .offset(0)
-            .range(size_of::<Transform>() as u64);
-
-        let image_info = vk::DescriptorImageInfoBuilder::new()
-            .image_view(texture_view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .sampler(sampler);
-
-        let buffer_infos = [buffer_info];
-        let image_infos = [image_info];
-
-        let uniform_dw = vk::WriteDescriptorSetBuilder::new()
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .dst_set(descriptor_sets[ix])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .buffer_info(&buffer_infos);
-
-        let combined_sampler_dw = vk::WriteDescriptorSetBuilder::new()
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .dst_set(descriptor_sets[ix])
-            .dst_binding(1)
-            .dst_array_element(0)
-            .image_info(&image_infos);
-
-        device.update_descriptor_sets(&[uniform_dw, combined_sampler_dw], &[]);
-    }
-
-    descriptor_sets
-}
-
-pub unsafe fn create_descriptor_pool(
-    device: &DeviceLoader,
-    frames_in_flight: usize,
-) -> vk::DescriptorPool {
-    let pool_sizes = [
-        vk::DescriptorPoolSizeBuilder::new()
-            ._type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(frames_in_flight as u32),
-        vk::DescriptorPoolSizeBuilder::new()
-            ._type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(frames_in_flight as u32),
-    ];
-    let pool_info = vk::DescriptorPoolCreateInfoBuilder::new()
-        .pool_sizes(&pool_sizes)
-        .max_sets(frames_in_flight as u32);
-
-    device
-        .create_descriptor_pool(&pool_info, None)
-        .expect("Failed to create a descriptor pool")
-}
-
-pub unsafe fn create_descriptor_set_layout(ctx: &Context) -> vk::DescriptorSetLayout {
-    let transform_binding = Transform::binding();
-    let sampler_binding = create_sampler_binding();
-    let bindings = [transform_binding, sampler_binding];
-
-    let layout_info = vk::DescriptorSetLayoutCreateInfoBuilder::new().bindings(&bindings);
-
-    let descriptor_set_layout = ctx
-        .device
-        .create_descriptor_set_layout(&layout_info, None)
-        .expect("failed to create descriptor set layout");
-
-    descriptor_set_layout
-}
-
-fn create_sampler_binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
-    vk::DescriptorSetLayoutBindingBuilder::new()
-        .binding(1)
-        .descriptor_count(1)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
 }
 
 pub unsafe fn upload_uniform_buffers(
@@ -507,14 +410,4 @@ pub unsafe fn create_image_view(
     device
         .create_image_view(&image_view_info, None)
         .expect("failed to create texture view")
-}
-
-impl Transform {
-    fn binding<'a>() -> vk::DescriptorSetLayoutBindingBuilder<'a> {
-        vk::DescriptorSetLayoutBindingBuilder::new()
-            .binding(0)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-    }
 }

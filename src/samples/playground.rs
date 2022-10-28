@@ -4,8 +4,10 @@ use std::path::Path;
 use nalgebra::{Point3, Rotation3, Unit, Vector3, Vector4};
 use winit::event::VirtualKeyCode;
 
+use crate::assets::Asset;
+use crate::assets::Assets;
 use crate::camera::Camera;
-use crate::mesh::Mesh;
+use crate::gfx::mesh::Mesh;
 use crate::obj_loader::ObjLoader;
 use crate::object::Object;
 use crate::scene::DynamicScene;
@@ -27,24 +29,29 @@ pub struct PlaygroundScene {
 }
 
 impl PlaygroundScene {
-    pub fn new(aspect_ratio: f32) -> Self {
+    pub fn new(aspect_ratio: f32, mut assets: Assets) -> Self {
         let up = Vector3::y_axis();
-        let cell = Mesh::new_plane();
+        let chess_cell_id = Mesh::new_plane("chess_cell", &mut assets);
         let mesh_loader = ObjLoader::new();
-        let plant = mesh_loader.load_from_file(Path::new("assets/models/indoor plant_02.obj"));
+        let plant_id = mesh_loader.load_from_file(
+            Path::new("assets/models/indoor plant_02.obj"),
+            "plant",
+            &mut assets,
+        );
 
         let mut objects = Vec::with_capacity(17);
         objects.push(Object {
-            mesh: plant,
+            mesh_id: plant_id,
             transform: Transform::new(Vector3::new(-2.0, 2.0, 2.0), Vector4::zeros()),
         });
 
+        let cell = assets.get_mesh_by_id(chess_cell_id).unwrap();
         let cell_w = cell.bbox.width;
         let cell_l = cell.bbox.length;
         for row in 0..8 {
             for col in 0..8 {
                 let o = Object {
-                    mesh: cell.clone(),
+                    mesh_id: cell.id(),
                     transform: Transform {
                         position: Vector3::new(cell_w * row as f32, 0.0, cell_l * col as f32),
                         rotation: Vector4::new(1.0, 0.0, 0.0, 90.0),
@@ -63,6 +70,7 @@ impl PlaygroundScene {
 
         Self {
             inner: Scene {
+                assets,
                 objects,
                 cameras: vec![camera],
             },
@@ -133,6 +141,14 @@ impl Scenelike for PlaygroundScene {
 
     fn objects(&self) -> &[Object] {
         &self.inner.objects
+    }
+
+    fn assets(&self) -> &Assets {
+        &self.inner.assets
+    }
+
+    fn assets_mut(&mut self) -> &mut Assets {
+        &mut self.inner.assets
     }
 }
 

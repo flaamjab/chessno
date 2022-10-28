@@ -1,7 +1,9 @@
 mod context;
+mod descriptor;
 mod g;
 pub mod geometry;
 mod memory;
+pub mod mesh;
 mod physical_device;
 pub mod renderer;
 mod shader;

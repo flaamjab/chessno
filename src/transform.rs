@@ -1,6 +1,6 @@
 use nalgebra::{Matrix4, Rotation3, Translation3, Unit, Vector3, Vector4};
 
-pub const TOLERANCE: f32 = 1e-4;
+const TOLERANCE: f32 = 1e-4;
 
 pub struct Transform {
     pub position: Vector3<f32>,

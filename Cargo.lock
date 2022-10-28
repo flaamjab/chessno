@@ -164,6 +164,7 @@ dependencies = [
  "rand",
  "smallvec",
  "thiserror",
+ "uuid",
  "winit",
 ]
 
@@ -1485,6 +1486,15 @@ name = "unicode-ident"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcc811dc4066ac62f84f11307873c4850cb653bfa9b1719cee2bd2204a4bc5dd"
+
+[[package]]
+name = "uuid"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "feb41e78f93363bb2df8b0e86a2ca30eed7806ea16ea0c790d757cf93f79be83"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "vec_map"

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use assets::Assets;
 use scene::DynamicScene;
 use winit::{
     dpi::PhysicalSize,
@@ -13,13 +14,14 @@ use crate::logging::{debug, trace};
 use crate::samples::PlaygroundScene;
 use crate::timer::Timer;
 
+mod assets;
 mod camera;
 mod frame_counter;
 mod gfx;
 mod logging;
-mod mesh;
 mod obj_loader;
 mod object;
+mod path_wrangler;
 mod samples;
 mod scene;
 mod timer;
@@ -33,12 +35,13 @@ pub fn linux_main() {
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
 
+    let mut assets = Assets::new();
     let mut renderer = Renderer::new(TITLE, &window);
 
     let mut timer = Timer::new();
     let mut pressed_keys = HashSet::new();
 
-    let mut scene = PlaygroundScene::new(aspect_ratio(window.inner_size()));
+    let mut scene = PlaygroundScene::new(aspect_ratio(window.inner_size()), assets);
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { event, .. } => match event {

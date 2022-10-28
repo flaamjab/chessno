@@ -16,6 +16,7 @@ thiserror = "1.0"
 smallvec = "1.10"
 memoffset = "0.6.5"
 obj = "0.10.2"
+uuid = { version = "1.2.1", features = ["v4" ]}
 
 [lib]
 crate-type = ["lib", "cdylib"]
