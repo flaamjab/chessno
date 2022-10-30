@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use assets::Assets;
-use scene::DynamicScene;
+use gfx::texture::Texture;
+use scene::{DynamicScene, Scenelike};
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, Event, WindowEvent},
@@ -35,13 +36,15 @@ pub fn linux_main() {
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
 
-    let mut assets = Assets::new();
+    let assets = Assets::new();
     let mut renderer = Renderer::new(TITLE, &window);
 
     let mut timer = Timer::new();
     let mut pressed_keys = HashSet::new();
 
     let mut scene = PlaygroundScene::new(aspect_ratio(window.inner_size()), assets);
+    let textures: Vec<&Texture> = scene.assets().textures().collect();
+    renderer.use_textures(&textures);
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { event, .. } => match event {

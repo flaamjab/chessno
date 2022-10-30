@@ -1,6 +1,5 @@
 use std::collections::hash_map::Entry;
 use std::mem::size_of;
-use std::path::Path;
 use std::{collections::HashMap, ffi::c_void};
 
 use erupt::vk;
@@ -38,7 +37,7 @@ pub struct Renderer {
     cmd_pool: vk::CommandPool,
 
     textures: HashMap<AssetId, GpuResidentTexture>,
-    global_descriptor_set: vk::DescriptorSet,
+    texture_descriptor_sets: HashMap<AssetId, vk::DescriptorSet>,
 
     new_size: vk::Extent2D,
 }
@@ -78,7 +77,7 @@ impl Renderer {
                 cmd_pool,
                 frames_in_flight,
                 frame_number: 0,
-                global_descriptor_set: vk::DescriptorSet::null(),
+                texture_descriptor_sets: HashMap::new(),
                 resources,
                 textures: HashMap::new(),
                 resize_required: false,
@@ -87,7 +86,7 @@ impl Renderer {
         }
     }
 
-    pub fn use_textures(&mut self, textures: &[Texture]) {
+    pub fn use_textures(&mut self, textures: &[&Texture]) {
         unsafe {
             for t in textures {
                 if !self.textures.contains_key(&t.id()) {
@@ -96,11 +95,13 @@ impl Renderer {
             }
 
             let textures: SmallVec<[&GpuResidentTexture; 16]> = self.textures.values().collect();
-            self.global_descriptor_set = ds::global_textures_descriptor_set(
+            self.texture_descriptor_sets = ds::texture_descriptor_sets(
                 &self.ctx.device,
                 self.resources.descriptor_pool,
-                self.resources.global_descriptor_set_layout,
+                self.resources.material_dsl,
+                1,
                 &textures,
+                self.resources.sampler,
             );
         }
     }
@@ -154,12 +155,6 @@ impl Renderer {
                 free_queue.push((vertex_buf, vertex_mem));
 
                 for sm in &mesh.submeshes {
-                    if let Entry::Vacant(e) = self.textures.entry(sm.texture_id) {
-                        let t = assets
-                            .get_texture_by_id(sm.texture_id)
-                            .expect("failed to fetch texture that is supposed to be available");
-                        e.insert(t.load(&self.ctx));
-                    }
                     let indices = &mesh.indices[sm.start_index..sm.end_index];
                     let (index_buf, index_mem) = memory::create_index_buffer(
                         &self.ctx,
@@ -195,12 +190,13 @@ impl Renderer {
                         &mvp as *const Spatial as *const c_void,
                     );
 
+                    let texture_descriptor_set = self.texture_descriptor_sets[&sm.texture_id];
                     device.cmd_bind_descriptor_sets(
                         cmd_buf,
                         vk::PipelineBindPoint::GRAPHICS,
                         self.resources.pipeline.layout,
                         0,
-                        &[self.global_descriptor_set],
+                        &[texture_descriptor_set],
                         &[],
                     );
                     device.cmd_draw_indexed(cmd_buf, indices.len() as _, 1, 0, 0, 0);
@@ -285,7 +281,7 @@ struct Resources {
     descriptor_pool: vk::DescriptorPool,
     sampler: vk::Sampler,
     uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
-    global_descriptor_set_layout: vk::DescriptorSetLayout,
+    material_dsl: vk::DescriptorSetLayout,
     pipeline: Pipeline,
 }
 
@@ -309,10 +305,8 @@ impl Resources {
                 memory::create_uniform_buffers(&ctx, size_of::<Transform>(), FRAMES_IN_FLIGHT);
             let descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
+            let texture_descriptor_set_layout = ds::descriptor_set_layout_1_texture(&ctx.device, 1);
             let sampler = texture::create_sampler(&ctx);
-
-            let global_descriptor_set_layout =
-                ds::descriptor_set_layout_16_textures(&ctx.device, 0);
 
             let vertex_binding_descs = [Vertex::binding_desc()];
             let vertex_attribute_descs = Vertex::attribute_descs();
@@ -322,7 +316,7 @@ impl Resources {
                 &shader_stages,
                 &vertex_binding_descs,
                 &vertex_attribute_descs,
-                &[global_descriptor_set_layout],
+                &[texture_descriptor_set_layout],
             );
 
             drop(shader_stages);
@@ -331,7 +325,7 @@ impl Resources {
 
             Self {
                 descriptor_pool,
-                global_descriptor_set_layout,
+                material_dsl: texture_descriptor_set_layout,
                 render_pass,
                 pipeline,
                 uniforms,
@@ -347,7 +341,7 @@ impl Resources {
             self.descriptor_pool,
             self.pipeline.handle,
             self.pipeline.layout,
-            &[self.global_descriptor_set_layout],
+            &[self.material_dsl],
             self.render_pass,
             self.sampler,
         )

@@ -61,6 +61,10 @@ impl Assets {
         self.name_map.contains_key(name)
     }
 
+    pub fn textures(&self) -> impl Iterator<Item = &Texture> {
+        self.textures.values()
+    }
+
     fn record_name(&mut self, name: &str, asset: &impl Asset) {
         self.name_map.insert(name.to_string(), asset.id());
     }

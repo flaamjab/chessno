@@ -41,6 +41,12 @@ pub struct GpuResidentTexture {
     pub image_view: vk::ImageView,
 }
 
+impl GpuResidentTexture {
+    pub fn id(&self) -> AssetId {
+        self.id
+    }
+}
+
 impl DeviceResource for GpuResidentTexture {
     fn destroy(&self, device: &DeviceLoader) {
         unsafe {

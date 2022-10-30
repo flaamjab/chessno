@@ -13,5 +13,5 @@ layout(location = 1) out vec3 color;
 void main() {
     gl_Position = spatial.mvp * vec4(inPosition, 1.0);
     color = vec3(spatial.mvp * vec4(inPosition, 1.0));
-    fragTexCoord = inTexCoords.rg;
+    fragTexCoord = vec2(inTexCoords.x, 1.0 - inTexCoords.y);
 }

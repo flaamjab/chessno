@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::io;
-use std::path::Path;
 
 use obj::ObjError;
 
-use crate::assets::{generate_id, Asset, AssetId, Assets, MISSING_TEXTURE};
+use crate::assets::{generate_id, Asset, AssetId, Assets};
 use crate::gfx::geometry::Vertex;
-use crate::gfx::texture::Texture;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
@@ -23,7 +21,6 @@ pub struct Submesh {
     pub texture_id: AssetId,
     pub start_index: usize,
     pub end_index: usize,
-    pub bbox: BBox,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,7 +37,7 @@ impl Asset for Mesh {
 }
 
 impl Mesh {
-    pub fn new_plane(name: &str, assets: &mut Assets) -> AssetId {
+    pub fn new_plane(name: &str, texture_id: AssetId, assets: &mut Assets) -> AssetId {
         let vertices = [
             Vertex {
                 pos: [-0.5, -0.5, 0.0],
@@ -78,10 +75,9 @@ impl Mesh {
             bbox: bbox.clone(),
             textures: HashSet::new(),
             submeshes: vec![Submesh {
-                bbox,
                 start_index: 0,
                 end_index: n_indices,
-                texture_id: assets.id_of(MISSING_TEXTURE).unwrap(),
+                texture_id,
             }],
         };
         assets.insert_mesh(name, mesh);

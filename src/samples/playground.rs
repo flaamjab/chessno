@@ -6,8 +6,10 @@ use winit::event::VirtualKeyCode;
 
 use crate::assets::Asset;
 use crate::assets::Assets;
+use crate::assets::MISSING_TEXTURE;
 use crate::camera::Camera;
 use crate::gfx::mesh::Mesh;
+use crate::gfx::texture::Texture;
 use crate::obj_loader::ObjLoader;
 use crate::object::Object;
 use crate::scene::DynamicScene;
@@ -31,35 +33,44 @@ pub struct PlaygroundScene {
 impl PlaygroundScene {
     pub fn new(aspect_ratio: f32, mut assets: Assets) -> Self {
         let up = Vector3::y_axis();
-        let chess_cell_id = Mesh::new_plane("chess_cell", &mut assets);
-        let mesh_loader = ObjLoader::new();
-        let plant_id = mesh_loader.load_from_file(
-            Path::new("assets/models/indoor plant_02.obj"),
-            "plant",
-            &mut assets,
-        );
+
+        let table_path = Path::new("assets/models/table/table.obj");
+        let plant_path = Path::new("assets/models/indoor_plant/indoor plant_02.obj");
+        let m1887_path = Path::new("assets/models/m1887/M1887.obj");
+
+        // let shrek_texture = Texture::from_file(Path::new("assets/textures/shrek.jpg")).unwrap();
+        // let shrek_texture_id = shrek_texture.id();
+        // assets.insert_texture("shrek", shrek_texture);
+
+        // let chess_cell_id = Mesh::new_plane("chess_cell", shrek_texture_id, &mut assets);
+        let mut mesh_loader = ObjLoader::new(&mut assets);
+        let mesh_id = mesh_loader.load_from_file(Path::new(m1887_path), "model");
 
         let mut objects = Vec::with_capacity(17);
         objects.push(Object {
-            mesh_id: plant_id,
-            transform: Transform::new(Vector3::new(-2.0, 2.0, 2.0), Vector4::zeros()),
+            mesh_id,
+            transform: Transform::new(Vector3::zeros(), Vector4::zeros()),
         });
+        // objects.push(Object {
+        //     mesh_id: plant_id,
+        //     transform: Transform::new(Vector3::zeros(), Vector4::zeros()),
+        // });
 
-        let cell = assets.get_mesh_by_id(chess_cell_id).unwrap();
-        let cell_w = cell.bbox.width;
-        let cell_l = cell.bbox.length;
-        for row in 0..8 {
-            for col in 0..8 {
-                let o = Object {
-                    mesh_id: cell.id(),
-                    transform: Transform {
-                        position: Vector3::new(cell_w * row as f32, 0.0, cell_l * col as f32),
-                        rotation: Vector4::new(1.0, 0.0, 0.0, 90.0),
-                    },
-                };
-                objects.push(o);
-            }
-        }
+        // let cell = assets.get_mesh_by_id(chess_cell_id).unwrap();
+        // let cell_w = cell.bbox.width;
+        // let cell_l = cell.bbox.length;
+        // for row in 0..8 {
+        //     for col in 0..8 {
+        //         let o = Object {
+        //             mesh_id: cell.id(),
+        //             transform: Transform {
+        //                 position: Vector3::new(cell_w * row as f32, 0.0, cell_l * col as f32),
+        //                 rotation: Vector4::new(1.0, 0.0, 0.0, 90.0),
+        //             },
+        //         };
+        //         objects.push(o);
+        //     }
+        // }
 
         let camera_pos = Point3::new(0.0, -1.0, -2.0);
         let camera_dir = Unit::new_normalize(-camera_pos.coords);
@@ -78,7 +89,7 @@ impl PlaygroundScene {
             camera_pos,
             camera_dir,
             camera_right,
-            move_speed: 10.0,
+            move_speed: 5.0,
             look_sensitivity: 150.0,
         }
     }
