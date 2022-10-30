@@ -2,31 +2,58 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use obj::{Obj, ObjMaterial};
+use log::warn;
+use obj::{Group, Obj, ObjMaterial, SimplePolygon};
+use smallvec::{smallvec, SmallVec};
 
-use crate::assets::{generate_id, Asset, AssetId, Assets, MISSING_TEXTURE};
+use crate::assets::Asset;
+use crate::assets::{generate_id, AssetId, Assets, MISSING_TEXTURE};
+use crate::gfx::geometry::Vertex;
 use crate::gfx::mesh::{BBox, Mesh, Submesh};
-use crate::gfx::{geometry::Vertex, texture::Texture};
-use crate::logging::debug;
+use crate::gfx::texture::Texture;
 use crate::path_wrangler::PathWrangler;
 
-pub struct ObjLoader {}
+pub struct ObjLoader<'a> {
+    vertices: Vec<Vertex>,
+    indices: Vec<u16>,
+    textures: HashSet<AssetId>,
+    assets: &'a mut Assets,
+}
 
-impl ObjLoader {
-    pub fn new() -> Self {
-        Self {}
+struct IndexedVertex(usize, Vertex);
+
+impl<'a> ObjLoader<'a> {
+    pub fn new(assets: &'a mut Assets) -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            textures: HashSet::new(),
+            assets,
+        }
     }
 
-    pub fn load_from_file(&self, path: &Path, name: &str, assets: &mut Assets) -> AssetId {
+    pub fn load_from_file(&mut self, path: &Path, name: &str) -> AssetId {
         let mut obj = Obj::load(path).expect("failed to load OBJ file");
+
+        let vertex_count = obj.data.position.len();
+        self.vertices = vec![
+            Vertex {
+                pos: [0.0; 3],
+                uv: [0.0; 3],
+            };
+            vertex_count
+        ];
+        self.indices = Vec::with_capacity(vertex_count);
+
         obj.load_mtls()
             .expect("failed to load one or more MTL files");
-        let vertices = self.load_vertices(&obj);
-        let indices = self.load_indices(&obj);
-        let textures = self.load_textures(&obj, assets);
-        let submeshes = self.load_groups(&obj, assets);
+
+        let submeshes = self.assemble(&obj);
 
         let mesh_id = generate_id();
+        let vertices = std::mem::replace(&mut self.vertices, Vec::new());
+        let indices = std::mem::replace(&mut self.indices, Vec::new());
+        let textures = std::mem::replace(&mut self.textures, HashSet::new());
         let mesh = Mesh {
             id: mesh_id,
             vertices,
@@ -35,117 +62,121 @@ impl ObjLoader {
             submeshes,
             bbox: BBox::default(),
         };
-        assets.insert_mesh(name, mesh);
+
+        self.assets.insert_mesh(name, mesh);
 
         mesh_id
     }
 
-    fn load_vertices(&self, obj: &Obj) -> Vec<Vertex> {
-        let mut vertices: Vec<_> = obj
-            .data
-            .position
-            .iter()
-            .map(|p| Vertex {
-                pos: [p[0], p[1], p[2]],
-                uv: [0.0; 3],
-            })
-            .collect();
-
-        for (v, t) in vertices.iter_mut().zip(&obj.data.texture) {
-            v.uv = [t[0], t[1], 0.0];
-        }
-
-        vertices
-    }
-
-    fn load_indices(&self, obj: &Obj) -> Vec<u16> {
-        let mut indices = Vec::with_capacity(obj.data.position.len());
-        for o in &obj.data.objects {
-            for g in &o.groups {
-                for p in &g.polys {
-                    if p.0.len() == 4 {
-                        indices.extend(
-                            [p.0[0], p.0[1], p.0[2], p.0[0], p.0[2], p.0[3]].map(|t| t.0 as u16),
-                        );
-                    } else {
-                        panic!("unsupported OBJ face format")
-                    }
-                }
-            }
-        }
-        indices
-    }
-
-    fn load_textures(&self, obj: &Obj, assets: &mut Assets) -> HashSet<AssetId> {
-        let mut textures = HashSet::new();
-        let mtls = &obj.data.material_libs;
-        for ml in mtls {
-            for m in &ml.materials {
-                if let Some(map_kd) = &m.map_kd {
-                    let path = self.texture_path(&map_kd);
-                    let path = obj.path.join(path);
-                    let name = self.texture_name(&path);
-                    if path.exists() && !assets.is_present(&name) {
-                        debug!("Loading texture at {:?}", &path);
-                        eprintln!("Loading texture at {:?}", &path);
-                        let t = Texture::from_file(&path)
-                            .expect("failed to load texture from existing file");
-                        textures.insert(t.id());
-                        assets.insert_texture(&name, t);
-                    }
-                }
-            }
-        }
-
-        textures
-    }
-
-    fn load_groups(&self, obj: &Obj, assets: &Assets) -> Vec<Submesh> {
+    fn assemble(&mut self, obj: &Obj) -> Vec<Submesh> {
+        let mut submesh_start;
+        let mut submesh_end = 0;
         let mut submeshes = Vec::with_capacity(1);
-        let mut submesh_start_vertex;
-        let mut submesh_end_vertex: usize = 0;
-        let missing_texture_id = assets.id_of(MISSING_TEXTURE).unwrap();
-        for o in &obj.data.objects {
-            for g in &o.groups {
-                submesh_start_vertex = submesh_end_vertex;
-                let texture_id = match &g.material {
-                    Some(ObjMaterial::Mtl(m)) => {
-                        if let Some(map_kd) = &m.map_kd {
-                            let path = self.texture_path(map_kd);
-                            let name = self.texture_name(&path);
-                            if let Some(id) = assets.id_of(&name) {
-                                id
-                            } else {
-                                missing_texture_id
-                            }
-                        } else {
-                            missing_texture_id
-                        }
-                    }
-                    _ => missing_texture_id,
-                };
+        for object in &obj.data.objects {
+            for group in &object.groups {
+                submesh_start = submesh_end;
+                for poly in &group.polys {
+                    let poly_indices = self.indices(&poly);
+                    submesh_end += poly_indices.len();
+                    let poly_vertices = self.vertices(obj, &poly);
 
-                for _ in &g.polys {
-                    submesh_end_vertex += 6;
+                    // Update mesh vertices and indices
+                    self.indices.extend(poly_indices.iter());
+                    for iv in poly_vertices {
+                        self.vertices[iv.0] = iv.1;
+                    }
                 }
+
+                let texture_id = self.texture(obj, &group);
+                self.textures.insert(texture_id);
 
                 submeshes.push(Submesh {
                     texture_id,
-                    start_index: submesh_start_vertex,
-                    end_index: submesh_end_vertex,
-                    bbox: BBox::default(),
-                })
+                    start_index: submesh_start,
+                    end_index: submesh_end,
+                });
             }
         }
 
         submeshes
     }
 
-    fn texture_path(&self, path: &str) -> PathBuf {
-        PathWrangler::new(&path).with_os_convention().finish()
+    fn texture(&mut self, obj: &Obj, group: &Group) -> AssetId {
+        let missing_texture_id = self.assets.id_of(MISSING_TEXTURE).unwrap();
+        if let Some(material) = &group.material {
+            if let ObjMaterial::Mtl(material) = material {
+                if let Some(diffuse) = &material.map_kd {
+                    let path = self.texture_path(&obj.path, &diffuse);
+                    let name = self.texture_name(&path);
+                    if let Some(texture_id) = self.assets.id_of(&name) {
+                        texture_id
+                    } else {
+                        Texture::from_file(&path)
+                            .map(|t| {
+                                let id = t.id();
+                                self.assets.insert_texture(&name, t);
+                                id
+                            })
+                            .unwrap_or(missing_texture_id)
+                    }
+                } else {
+                    missing_texture_id
+                }
+            } else {
+                missing_texture_id
+            }
+        } else {
+            missing_texture_id
+        }
     }
 
-    fn texture_name<'a, 'b>(&'a self, path: &'b Path) -> Cow<'b, str> {
+    /// Creates vertices for a polygon, looking up actual data within `obj` by indices in `poly`.
+    fn vertices(&self, obj: &Obj, poly: &SimplePolygon) -> SmallVec<[IndexedVertex; 4]> {
+        let tuples = &poly.0;
+        let positions = &obj.data.position;
+        let uvs = &obj.data.texture;
+        tuples
+            .iter()
+            .map(|t| {
+                let uv = {
+                    if let Some(uv_ix) = t.1 {
+                        let uv = uvs[uv_ix];
+                        [uv[0], uv[1], 0.0]
+                    } else {
+                        warn!("Missing UV index for vertex index {}", t.0);
+                        [0.0; 3]
+                    }
+                };
+                let pos = positions[t.0];
+
+                IndexedVertex(t.0, Vertex { pos, uv })
+            })
+            .collect()
+    }
+
+    fn indices(&self, poly: &SimplePolygon) -> SmallVec<[u16; 8]> {
+        let tuples = &poly.0;
+        let indices: SmallVec<[usize; 8]> = match tuples.len() {
+            3 => {
+                let (a, b, c) = (tuples[0], tuples[1], tuples[2]);
+                smallvec![a.0, b.0, c.0]
+            }
+            4 => {
+                let (a, b, c, d) = (tuples[0], tuples[1], tuples[2], tuples[3]);
+                smallvec![a.0, b.0, c.0, a.0, c.0, d.0]
+            }
+            _ => panic!("unsupported polygon vertex count ({})", tuples.len()),
+        };
+
+        indices.into_iter().map(|ix| ix as u16).collect()
+    }
+
+    fn texture_path(&self, base_path: &Path, name: &str) -> PathBuf {
+        let path = PathWrangler::new(&name).with_os_convention().finish();
+        base_path.join(path)
+    }
+
+    fn texture_name<'b, 'c>(&'b self, path: &'c Path) -> Cow<'c, str> {
         path.file_stem().unwrap().to_string_lossy()
     }
 }
@@ -157,8 +188,8 @@ mod test {
     #[test]
     fn test_model_loads_successfully() {
         let path = Path::new("assets/models/indoor plant_02.obj");
-        let loader = ObjLoader::new();
         let mut assets = Assets::new();
-        let _mesh = loader.load_from_file(path, "plant", &mut assets);
+        let mut loader = ObjLoader::new(&mut assets);
+        let _mesh = loader.load_from_file(path, "plant");
     }
 }
