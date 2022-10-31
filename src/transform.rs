@@ -1,14 +1,14 @@
-use nalgebra::{Matrix4, Rotation3, Translation3, Unit, Vector3, Vector4};
+use nalgebra::{Matrix4, Point3, Rotation3, Translation3, Unit, Vector4};
 
 const TOLERANCE: f32 = 1e-4;
 
 pub struct Transform {
-    pub position: Vector3<f32>,
+    pub position: Point3<f32>,
     pub rotation: Vector4<f32>,
 }
 
 impl Transform {
-    pub fn new(position: Vector3<f32>, rotation: Vector4<f32>) -> Self {
+    pub fn new(position: Point3<f32>, rotation: Vector4<f32>) -> Self {
         Self { position, rotation }
     }
 

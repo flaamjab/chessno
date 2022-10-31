@@ -4,14 +4,11 @@ use std::path::Path;
 use nalgebra::{Point3, Rotation3, Unit, Vector3, Vector4};
 use winit::event::VirtualKeyCode;
 
-use crate::assets::Asset;
 use crate::assets::Assets;
-use crate::assets::MISSING_TEXTURE;
 use crate::camera::Camera;
-use crate::gfx::mesh::Mesh;
-use crate::gfx::texture::Texture;
 use crate::obj_loader::ObjLoader;
 use crate::object::Object;
+use crate::projection::Projection;
 use crate::scene::DynamicScene;
 use crate::scene::Scene;
 use crate::scene::Scenelike;
@@ -31,7 +28,7 @@ pub struct PlaygroundScene {
 }
 
 impl PlaygroundScene {
-    pub fn new(aspect_ratio: f32, mut assets: Assets) -> Self {
+    pub fn new(assets: &mut Assets) -> Self {
         let up = Vector3::y_axis();
 
         let table_path = Path::new("assets/models/table/table.obj");
@@ -43,13 +40,13 @@ impl PlaygroundScene {
         // assets.insert_texture("shrek", shrek_texture);
 
         // let chess_cell_id = Mesh::new_plane("chess_cell", shrek_texture_id, &mut assets);
-        let mut mesh_loader = ObjLoader::new(&mut assets);
+        let mut mesh_loader = ObjLoader::new(assets);
         let mesh_id = mesh_loader.load_from_file(Path::new(m1887_path), "model");
 
         let mut objects = Vec::with_capacity(17);
         objects.push(Object {
             mesh_id,
-            transform: Transform::new(Vector3::zeros(), Vector4::zeros()),
+            transform: Transform::new(Point3::origin(), Vector4::zeros()),
         });
         // objects.push(Object {
         //     mesh_id: plant_id,
@@ -76,12 +73,11 @@ impl PlaygroundScene {
         let camera_dir = Unit::new_normalize(-camera_pos.coords);
         let camera_right = Unit::new_normalize(up.cross(&camera_dir));
 
-        let projection = Camera::perspective(45.0, aspect_ratio, 0.1, 100.0);
-        let camera = Camera::new(&camera_pos, &camera_dir, &projection);
+        let projection = Projection::perspective(45.0, 0.1, 100.0);
+        let camera = Camera::new(&camera_pos, &camera_dir, projection);
 
         Self {
             inner: Scene {
-                assets,
                 objects,
                 cameras: vec![camera],
             },
@@ -146,20 +142,16 @@ impl Scenelike for PlaygroundScene {
         &self.inner.cameras[0]
     }
 
+    fn active_camera_mut(&mut self) -> &mut Camera {
+        &mut self.inner.cameras[0]
+    }
+
     fn cameras(&self) -> &[Camera] {
         &self.inner.cameras
     }
 
     fn objects(&self) -> &[Object] {
         &self.inner.objects
-    }
-
-    fn assets(&self) -> &Assets {
-        &self.inner.assets
-    }
-
-    fn assets_mut(&mut self) -> &mut Assets {
-        &mut self.inner.assets
     }
 }
 
@@ -168,7 +160,7 @@ impl DynamicScene for PlaygroundScene {
         &mut self,
         time_delta: f32,
         pressed_keys: &HashSet<VirtualKeyCode>,
-        aspect_ratio: f32,
+        assets: &mut Assets,
     ) {
         let (camera_velocity, rot_left_right, rot_up_down) =
             self.camera_change(time_delta, &pressed_keys);
@@ -177,7 +169,8 @@ impl DynamicScene for PlaygroundScene {
         self.camera_dir = rot_left_right * rot_up_down * self.camera_dir;
         self.camera_right = Unit::new_normalize(self.camera_dir.cross(&self.up));
 
-        let projection = Camera::perspective(45.0, aspect_ratio, 0.1, 100.0);
-        self.inner.cameras[0] = Camera::new(&self.camera_pos, &self.camera_dir, &projection);
+        let camera = &mut self.inner.cameras[0];
+        camera.set_position(&self.camera_pos);
+        camera.set_direction(&self.camera_dir);
     }
 }

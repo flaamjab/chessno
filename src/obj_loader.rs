@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use log::warn;
+use log::{trace, warn};
 use obj::{Group, Obj, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
@@ -36,13 +36,7 @@ impl<'a> ObjLoader<'a> {
         let mut obj = Obj::load(path).expect("failed to load OBJ file");
 
         let vertex_count = obj.data.position.len();
-        self.vertices = vec![
-            Vertex {
-                pos: [0.0; 3],
-                uv: [0.0; 3],
-            };
-            vertex_count
-        ];
+        self.vertices = vec![Vertex::zeroed(); vertex_count];
         self.indices = Vec::with_capacity(vertex_count);
 
         obj.load_mtls()
@@ -72,6 +66,7 @@ impl<'a> ObjLoader<'a> {
         let mut submesh_start;
         let mut submesh_end = 0;
         let mut submeshes = Vec::with_capacity(1);
+        let zero_vertex = Vertex::zeroed();
         for object in &obj.data.objects {
             for group in &object.groups {
                 submesh_start = submesh_end;
@@ -83,7 +78,11 @@ impl<'a> ObjLoader<'a> {
                     // Update mesh vertices and indices
                     self.indices.extend(poly_indices.iter());
                     for iv in poly_vertices {
-                        self.vertices[iv.0] = iv.1;
+                        if self.vertices[iv.0] != zero_vertex {
+                            trace!("Vertex with position index {} is already written", iv.0);
+                        } else {
+                            self.vertices[iv.0] = iv.1;
+                        }
                     }
                 }
 
@@ -149,7 +148,13 @@ impl<'a> ObjLoader<'a> {
                 };
                 let pos = positions[t.0];
 
-                IndexedVertex(t.0, Vertex { pos, uv })
+                let color = if tuples.len() > 3 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [1.0; 3]
+                };
+
+                IndexedVertex(t.0, Vertex { pos, uv, color })
             })
             .collect()
     }

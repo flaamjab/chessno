@@ -26,26 +26,6 @@ pub struct Shader {
     stage: ShaderStage,
 }
 
-#[derive(Clone, Default)]
-pub struct ShaderParams {
-    matrices4f32: HashMap<String, Matrix4<f32>>,
-}
-
-impl ShaderParams {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn set_matrixf32(&mut self, name: &str, value: &Matrix4<f32>) {
-        self.matrices4f32.insert(name.to_string(), value.clone());
-    }
-
-    pub fn matrixf32(&self, name: &str) -> Matrix4<f32> {
-        let mut maybe_matrix = self.matrices4f32.get(name);
-        maybe_matrix.get_or_insert(&Matrix4::zeros()).clone()
-    }
-}
-
 impl Shader {
     pub fn new(code: &[u8], stage: ShaderStage) -> Self {
         Self {
@@ -65,7 +45,6 @@ impl Shader {
             module: module,
             stage: self.stage.into(),
             entry_point: CString::new("main").unwrap(),
-            params: Default::default(),
         }
     }
 }
@@ -74,7 +53,6 @@ pub struct InitializedShader {
     module: vk::ShaderModule,
     stage: vk::ShaderStageFlagBits,
     entry_point: CString,
-    params: ShaderParams,
 }
 
 impl InitializedShader {
@@ -84,14 +62,6 @@ impl InitializedShader {
             .stage(self.stage)
             .module(self.module)
             .name(&self.entry_point)
-    }
-
-    pub fn params(&self) -> &ShaderParams {
-        &self.params
-    }
-
-    pub fn set_params(&mut self, params: &ShaderParams) {
-        self.params = params.clone();
     }
 }
 

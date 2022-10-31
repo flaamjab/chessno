@@ -23,6 +23,7 @@ mod logging;
 mod obj_loader;
 mod object;
 mod path_wrangler;
+mod projection;
 mod samples;
 mod scene;
 mod timer;
@@ -36,14 +37,14 @@ pub fn linux_main() {
     let event_loop = EventLoop::new();
     let window = Window::new(&event_loop).unwrap();
 
-    let assets = Assets::new();
+    let mut assets = Assets::new();
     let mut renderer = Renderer::new(TITLE, &window);
 
     let mut timer = Timer::new();
     let mut pressed_keys = HashSet::new();
 
-    let mut scene = PlaygroundScene::new(aspect_ratio(window.inner_size()), assets);
-    let textures: Vec<&Texture> = scene.assets().textures().collect();
+    let mut scene = PlaygroundScene::new(&mut assets);
+    let textures: Vec<_> = assets.textures().collect();
     renderer.use_textures(&textures);
 
     event_loop.run(move |event, _, control_flow| match event {
@@ -72,9 +73,9 @@ pub fn linux_main() {
             let delta = timer.elapsed();
             timer.reset();
 
-            scene.update(delta, &pressed_keys, aspect_ratio(window.inner_size()));
+            scene.update(delta, &pressed_keys, &mut assets);
 
-            renderer.draw(&scene);
+            renderer.draw(&mut scene, &mut assets);
         }
         _ => {}
     })
@@ -95,9 +96,4 @@ pub fn android_main() {
             _ => {}
         })
     }
-}
-
-pub fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
-    let PhysicalSize { width, height } = size;
-    width as f32 / height as f32
 }

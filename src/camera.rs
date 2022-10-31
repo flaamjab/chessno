@@ -1,37 +1,41 @@
-use nalgebra::{Matrix4, Perspective3, Point3, Vector3};
+use nalgebra::{Matrix4, Point3, Vector3};
+
+use crate::projection::Projection;
 
 pub struct Camera {
-    pub position: Point3<f32>,
-    pub direction: Vector3<f32>,
-    pub projection: Matrix4<f32>,
+    position: Point3<f32>,
+    direction: Vector3<f32>,
+    projection: Projection,
 }
 
 impl Camera {
-    pub fn new(
-        position: &Point3<f32>,
-        direction: &Vector3<f32>,
-        projection: &Matrix4<f32>,
-    ) -> Self {
+    pub fn new(position: &Point3<f32>, direction: &Vector3<f32>, projection: Projection) -> Self {
         Self {
             position: *position,
             direction: *direction,
-            projection: *projection,
+            projection,
         }
     }
 
+    pub fn set_position(&mut self, position: &Point3<f32>) {
+        self.position = *position;
+    }
+
+    pub fn set_direction(&mut self, direction: &Vector3<f32>) {
+        self.direction = *direction;
+    }
+
     pub fn matrix(&self) -> Matrix4<f32> {
+        let projection = self.projection.matrix();
         let view = Matrix4::look_at_rh(
             &self.position,
             &(self.position + self.direction),
             &Vector3::y(),
         );
-        self.projection * view
+        projection * view
     }
 
-    pub fn perspective(fov_deg: f32, aspect: f32, near: f32, far: f32) -> Matrix4<f32> {
-        let mut p = Perspective3::new(aspect, fov_deg.to_radians(), near, far).to_homogeneous();
-        p.m22 *= -1.0;
-
-        p
+    pub fn set_viewport_dimensions(&mut self, width: f32, height: f32) {
+        self.projection.set_viewport_dimensions(width, height);
     }
 }

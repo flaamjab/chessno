@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::mem::size_of;
 use std::{collections::HashMap, ffi::c_void};
 
@@ -7,7 +6,7 @@ use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::assets::{Asset, AssetId};
+use crate::assets::{Asset, AssetId, Assets};
 use crate::gfx::{
     context::Context,
     descriptor as ds, g,
@@ -33,13 +32,13 @@ pub struct Renderer {
     frames_in_flight: SmallVec<[Frame; FRAMES_IN_FLIGHT]>,
     frame_number: usize,
     resources: Resources,
-    resize_required: bool,
     cmd_pool: vk::CommandPool,
 
     textures: HashMap<AssetId, GpuResidentTexture>,
     texture_descriptor_sets: HashMap<AssetId, vk::DescriptorSet>,
 
-    new_size: vk::Extent2D,
+    resize_required: bool,
+    surface_size: vk::Extent2D,
 }
 
 #[derive(Clone)]
@@ -81,7 +80,7 @@ impl Renderer {
                 resources,
                 textures: HashMap::new(),
                 resize_required: false,
-                new_size: vk::Extent2D::default(),
+                surface_size: vk::Extent2D::default(),
             }
         }
     }
@@ -98,7 +97,7 @@ impl Renderer {
             self.texture_descriptor_sets = ds::texture_descriptor_sets(
                 &self.ctx.device,
                 self.resources.descriptor_pool,
-                self.resources.material_dsl,
+                self.resources.material_descriptor_set_layout,
                 1,
                 &textures,
                 self.resources.sampler,
@@ -106,7 +105,7 @@ impl Renderer {
         }
     }
 
-    pub fn draw(&mut self, scene: &impl Scenelike) {
+    pub fn draw(&mut self, scene: &mut impl Scenelike, assets: &mut Assets) {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
 
@@ -117,11 +116,16 @@ impl Renderer {
             current_frame.in_flight_fence,
             current_frame.image_available_semaphore,
             &mut self.resize_required,
-            &self.new_size,
+            &self.surface_size,
         ) {
             Some(image_index) => image_index,
             None => return,
         };
+
+        scene.active_camera_mut().set_viewport_dimensions(
+            self.surface_size.width as f32,
+            self.surface_size.height as f32,
+        );
 
         unsafe {
             let framebuffers = self
@@ -139,7 +143,6 @@ impl Renderer {
 
         let objects = scene.objects();
         let camera = scene.active_camera();
-        let assets = scene.assets();
         let mut free_queue = Vec::with_capacity(objects.len());
         for o in objects {
             let mesh = assets
@@ -169,8 +172,6 @@ impl Renderer {
 
                     let device = &self.ctx.device;
                     let cmd_buf = self.current_frame().cmd_buf;
-
-                    // memory::upload_uniform_buffers(&device, &mvp, uniform_mem);
 
                     self.ctx.device.cmd_bind_pipeline(
                         cmd_buf,
@@ -240,7 +241,7 @@ impl Renderer {
         self.resize_required = true;
 
         let PhysicalSize { width, height } = new_size;
-        self.new_size = vk::Extent2D { width, height };
+        self.surface_size = vk::Extent2D { width, height };
     }
 
     fn advance_frame(&mut self) {
@@ -281,7 +282,7 @@ struct Resources {
     descriptor_pool: vk::DescriptorPool,
     sampler: vk::Sampler,
     uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
-    material_dsl: vk::DescriptorSetLayout,
+    material_descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline: Pipeline,
 }
 
@@ -325,7 +326,7 @@ impl Resources {
 
             Self {
                 descriptor_pool,
-                material_dsl: texture_descriptor_set_layout,
+                material_descriptor_set_layout: texture_descriptor_set_layout,
                 render_pass,
                 pipeline,
                 uniforms,
@@ -341,7 +342,7 @@ impl Resources {
             self.descriptor_pool,
             self.pipeline.handle,
             self.pipeline.layout,
-            &[self.material_dsl],
+            &[self.material_descriptor_set_layout],
             self.render_pass,
             self.sampler,
         )
