@@ -1,6 +1,6 @@
 use nalgebra::{Matrix4, Point3, Rotation3, Translation3, Unit, Vector4};
 
-const TOLERANCE: f32 = 1e-4;
+use crate::math::TOLERANCE_F32;
 
 pub struct Transform {
     pub position: Point3<f32>,
@@ -16,7 +16,7 @@ impl Transform {
         let translation: Translation3<f32> = self.position.into();
 
         let rotation;
-        if self.rotation.w.abs() > TOLERANCE {
+        if self.rotation.w.abs() > TOLERANCE_F32 {
             rotation = Rotation3::from_axis_angle(
                 &Unit::new_normalize(self.rotation.xyz()),
                 self.rotation.w.to_radians(),

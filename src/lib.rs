@@ -1,15 +1,16 @@
-use assets::Assets;
+use std::{thread::sleep, time::Duration};
 
-use input_state::InputState;
-use scene::DynamicScene;
 use winit::{
-    event::{DeviceEvent, ElementState, Event, WindowEvent},
+    event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
 
+use crate::assets::Assets;
+use crate::input_state::InputState;
 use crate::logging::debug;
 use crate::samples::PlaygroundScene;
+use crate::scene::DynamicScene;
 use crate::timer::Timer;
 use crate::{gfx::renderer::Renderer, input_state::Key};
 
@@ -20,6 +21,7 @@ mod free_camera_control;
 mod gfx;
 mod input_state;
 mod logging;
+mod math;
 mod obj_loader;
 mod object;
 mod path_wrangler;
@@ -49,50 +51,51 @@ pub fn linux_main() {
     renderer.use_textures(&textures);
     renderer.use_meshes(&meshes);
 
-    event_loop.run(move |event, _, control_flow| {
-        let mut input_state_update = input_state.start_update();
-        match event {
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::MouseMotion { delta } => {
-                    debug!("{:?}", delta);
-                    input_state_update.set_mouse_offset(delta);
-                }
-                _ => {}
-            },
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::Resized(new_size) => {
-                    renderer.handle_resize(new_size);
-                }
-                WindowEvent::MouseInput { state, button, .. } => {
-                    debug!("{:?}@{:?}", button, state);
-                }
-                WindowEvent::KeyboardInput { input, .. } => match input.virtual_keycode {
-                    Some(code) => match input.state {
-                        ElementState::Pressed => {
-                            input_state_update.set_pressed(Key::KeyboardKey(code));
-                        }
-                        ElementState::Released => {
-                            input_state_update.set_released(Key::KeyboardKey(code));
-                        }
-                    },
-                    None => {}
-                },
-                WindowEvent::CloseRequested => {
-                    *control_flow = ControlFlow::Exit;
-                }
-                _ => {}
-            },
-            Event::MainEventsCleared => {
-                let delta = timer.elapsed();
-                timer.reset();
-                input_state_update.finish();
-
-                scene.update(delta, &input_state, &mut assets);
-
-                renderer.draw(&mut scene, &mut assets);
+    event_loop.run(move |event, _, control_flow| match event {
+        Event::DeviceEvent { event, .. } => match event {
+            DeviceEvent::MouseMotion { delta } => {
+                input_state.set_mouse_offset((delta.0 as f32, delta.1 as f32));
             }
             _ => {}
+        },
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::Resized(new_size) => {
+                renderer.handle_resize(new_size);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                debug!("{:?}@{:?}", button, state);
+                match state {
+                    ElementState::Pressed => input_state.set_pressed(Key::MouseButton(button)),
+                    ElementState::Released => input_state.set_released(Key::MouseButton(button)),
+                }
+            }
+            WindowEvent::KeyboardInput { input, .. } => match input.virtual_keycode {
+                Some(code) => match input.state {
+                    ElementState::Pressed => {
+                        input_state.set_pressed(Key::KeyboardKey(code));
+                    }
+                    ElementState::Released => {
+                        input_state.set_released(Key::KeyboardKey(code));
+                    }
+                },
+                None => {}
+            },
+            WindowEvent::CloseRequested => {
+                *control_flow = ControlFlow::Exit;
+            }
+            _ => {}
+        },
+        Event::MainEventsCleared => {
+            let delta = timer.elapsed();
+            timer.reset();
+
+            scene.update(&window, &input_state, delta, &mut assets);
+
+            renderer.draw(&mut scene, &mut assets);
+
+            input_state.end_frame();
         }
+        _ => {}
     })
 }
 

@@ -1,3 +1,5 @@
+use winit::window::Window;
+
 use crate::assets::Assets;
 use crate::camera::Camera;
 use crate::input_state::InputState;
@@ -10,5 +12,11 @@ pub trait Scene {
 }
 
 pub trait DynamicScene {
-    fn update(&mut self, time_delta: f32, input_state: &InputState, assets: &mut Assets);
+    fn update(
+        &mut self,
+        window: &Window,
+        input_state: &InputState,
+        time_delta: f32,
+        assets: &mut Assets,
+    );
 }

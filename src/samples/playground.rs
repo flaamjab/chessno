@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use nalgebra::{Point3, Vector4};
+use winit::window::Window;
 
 use crate::assets::Assets;
 use crate::camera::Camera;
@@ -94,7 +95,13 @@ impl Scene for PlaygroundScene {
 }
 
 impl DynamicScene for PlaygroundScene {
-    fn update(&mut self, time_delta: f32, input_state: &InputState, _assets: &mut Assets) {
-        self.camera_control.update(input_state, time_delta);
+    fn update(
+        &mut self,
+        window: &Window,
+        input_state: &InputState,
+        time_delta: f32,
+        _assets: &mut Assets,
+    ) {
+        self.camera_control.update(window, input_state, time_delta);
     }
 }
