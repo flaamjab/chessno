@@ -5,7 +5,7 @@ use std::{collections::HashMap, hash::Hash};
 use erupt::{utils, vk, DeviceLoader};
 use nalgebra::Matrix4;
 
-use crate::gfx::vulkan_resource::DeviceResource;
+use crate::gfx::resource::DeviceResource;
 
 pub enum ShaderStage {
     Vertex,

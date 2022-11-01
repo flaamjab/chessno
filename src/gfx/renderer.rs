@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::mem::size_of;
 use std::{collections::HashMap, ffi::c_void};
 
@@ -11,15 +12,16 @@ use crate::gfx::{
     context::Context,
     descriptor as ds, g,
     geometry::Vertex,
-    memory,
+    memory::{self, IndexBuffer, VertexBuffer},
+    mesh::{GpuResidentMesh, Mesh},
+    resource::DeviceResource,
     shader::{Shader, ShaderStage},
     spatial::Spatial,
     sync_pool::SyncPool,
     texture::{self, GpuResidentTexture, Texture},
-    vulkan_resource::DeviceResource,
 };
-use crate::scene::Scenelike;
-use crate::transform::Transform;
+use crate::logging::debug;
+use crate::scene::Scene;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
 const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
@@ -31,14 +33,22 @@ pub struct Renderer {
     sync_pool: SyncPool,
     frames_in_flight: SmallVec<[Frame; FRAMES_IN_FLIGHT]>,
     frame_number: usize,
-    resources: Resources,
     cmd_pool: vk::CommandPool,
 
     textures: HashMap<AssetId, GpuResidentTexture>,
     texture_descriptor_sets: HashMap<AssetId, vk::DescriptorSet>,
+    sampler: vk::Sampler,
+
+    meshes: HashMap<AssetId, GpuResidentMesh>,
 
     resize_required: bool,
     surface_size: vk::Extent2D,
+
+    descriptor_pool: vk::DescriptorPool,
+    texture_descriptor_set_layout: vk::DescriptorSetLayout,
+
+    render_pass: vk::RenderPass,
+    pipeline: Pipeline,
 }
 
 #[derive(Clone)]
@@ -69,15 +79,47 @@ impl Renderer {
                 })
                 .collect();
 
-            let resources = Resources::new(&ctx);
+            let render_pass = create_render_pass(&ctx);
+
+            let descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
+
+            let material_descriptor_set_layout =
+                ds::descriptor_set_layout_1_texture(&ctx.device, 1);
+            let sampler = texture::create_sampler(&ctx);
+
+            let vertex_shader =
+                Shader::new(SHADER_VERT, ShaderStage::Vertex).into_initialized(&ctx.device);
+            let fragment_shader =
+                Shader::new(SHADER_FRAG, ShaderStage::Fragment).into_initialized(&ctx.device);
+            let shader_stages = [vertex_shader.stage_info(), fragment_shader.stage_info()];
+
+            let vertex_binding_descs = [Vertex::binding_desc()];
+            let vertex_attribute_descs = Vertex::attribute_descs();
+            let pipeline = create_pipeline(
+                &ctx,
+                render_pass,
+                &shader_stages,
+                &vertex_binding_descs,
+                &vertex_attribute_descs,
+                &[material_descriptor_set_layout],
+            );
+
+            vertex_shader.destroy(&ctx.device);
+            fragment_shader.destroy(&ctx.device);
+
             Self {
                 ctx,
                 sync_pool,
                 cmd_pool,
                 frames_in_flight,
                 frame_number: 0,
+                descriptor_pool,
+                texture_descriptor_set_layout: material_descriptor_set_layout,
                 texture_descriptor_sets: HashMap::new(),
-                resources,
+                meshes: HashMap::new(),
+                pipeline,
+                render_pass,
+                sampler,
                 textures: HashMap::new(),
                 resize_required: false,
                 surface_size: vk::Extent2D::default(),
@@ -96,48 +138,86 @@ impl Renderer {
             let textures: SmallVec<[&GpuResidentTexture; 16]> = self.textures.values().collect();
             self.texture_descriptor_sets = ds::texture_descriptor_sets(
                 &self.ctx.device,
-                self.resources.descriptor_pool,
-                self.resources.material_descriptor_set_layout,
+                self.descriptor_pool,
+                self.texture_descriptor_set_layout,
                 1,
                 &textures,
-                self.resources.sampler,
+                self.sampler,
             );
         }
     }
 
-    pub fn draw(&mut self, scene: &mut impl Scenelike, assets: &mut Assets) {
+    pub fn use_meshes(&mut self, meshes: &[&Mesh]) {
         let copy_queue = self.ctx.queues.graphics;
         let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
+        unsafe {
+            for mesh in meshes {
+                for submesh in &mesh.submeshes {
+                    let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
+                        &self.ctx,
+                        &mesh.vertices,
+                        copy_queue_family,
+                        copy_queue,
+                    );
+                    let indices = &mesh.indices[submesh.start_index..submesh.end_index];
+                    let (index_buf, index_mem) = memory::create_index_buffer(
+                        &self.ctx,
+                        &indices,
+                        copy_queue_family,
+                        copy_queue,
+                    );
 
-        let current_frame = self.current_frame().clone();
-        let image_index = match self.ctx.swapchain.acquire_image(
-            &self.ctx.device,
-            &self.ctx.physical_device,
-            current_frame.in_flight_fence,
-            current_frame.image_available_semaphore,
-            &mut self.resize_required,
-            &self.surface_size,
-        ) {
-            Some(image_index) => image_index,
-            None => return,
-        };
+                    let vertex_buf = VertexBuffer {
+                        handle: vertex_buf,
+                        memory: vertex_mem,
+                    };
 
+                    let index_buf = IndexBuffer {
+                        handle: index_buf,
+                        memory: index_mem,
+                        index_count: indices.len(),
+                    };
+
+                    let gpu_mesh = GpuResidentMesh {
+                        texture_id: submesh.texture_id,
+                        index_buf,
+                        vertex_buf,
+                    };
+
+                    match self.meshes.entry(submesh.id) {
+                        Entry::Vacant(e) => {
+                            e.insert(gpu_mesh);
+                        }
+                        _ => {}
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn draw(&mut self, scene: &mut impl Scene, assets: &mut Assets) {
         scene.active_camera_mut().set_viewport_dimensions(
             self.surface_size.width as f32,
             self.surface_size.height as f32,
         );
 
+        let image = match self.render_target() {
+            Some(image_index) => image_index,
+            None => return,
+        };
+
+        let current_frame = self.current_frame();
         unsafe {
             let framebuffers = self
                 .ctx
                 .swapchain
-                .framebuffers(&self.ctx.device, self.resources.render_pass);
+                .framebuffers(&self.ctx.device, self.render_pass);
             g::begin_draw(
                 &self.ctx.device,
                 current_frame.cmd_buf,
-                self.resources.render_pass,
-                framebuffers[image_index as usize],
-                self.ctx.swapchain.image_extent(),
+                self.render_pass,
+                framebuffers[image as usize],
+                self.ctx.swapchain.image_dimensions(),
             );
         }
 
@@ -149,25 +229,7 @@ impl Renderer {
                 .get_mesh_by_id(o.mesh_id)
                 .expect("failed to fetch mesh that is supposed to be loaded");
             unsafe {
-                let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
-                    &self.ctx,
-                    &mesh.vertices,
-                    copy_queue_family,
-                    copy_queue,
-                );
-                free_queue.push((vertex_buf, vertex_mem));
-
                 for sm in &mesh.submeshes {
-                    let indices = &mesh.indices[sm.start_index..sm.end_index];
-                    let (index_buf, index_mem) = memory::create_index_buffer(
-                        &self.ctx,
-                        &indices,
-                        copy_queue_family,
-                        copy_queue,
-                    );
-
-                    free_queue.push((index_buf, index_mem));
-
                     let mvp = Spatial(camera.matrix() * o.transform.matrix());
 
                     let device = &self.ctx.device;
@@ -176,15 +238,21 @@ impl Renderer {
                     self.ctx.device.cmd_bind_pipeline(
                         cmd_buf,
                         vk::PipelineBindPoint::GRAPHICS,
-                        self.resources.pipeline.handle,
+                        self.pipeline.handle,
                     );
 
-                    device.cmd_bind_vertex_buffers(cmd_buf, 0, &[vertex_buf], &[0]);
-                    device.cmd_bind_index_buffer(cmd_buf, index_buf, 0, vk::IndexType::UINT16);
+                    let mesh = &self.meshes[&sm.id];
+                    device.cmd_bind_vertex_buffers(cmd_buf, 0, &[mesh.vertex_buf.handle], &[0]);
+                    device.cmd_bind_index_buffer(
+                        cmd_buf,
+                        mesh.index_buf.handle,
+                        0,
+                        vk::IndexType::UINT16,
+                    );
 
                     device.cmd_push_constants(
                         cmd_buf,
-                        self.resources.pipeline.layout,
+                        self.pipeline.layout,
                         vk::ShaderStageFlags::VERTEX,
                         0,
                         size_of::<Spatial>() as _,
@@ -195,12 +263,12 @@ impl Renderer {
                     device.cmd_bind_descriptor_sets(
                         cmd_buf,
                         vk::PipelineBindPoint::GRAPHICS,
-                        self.resources.pipeline.layout,
+                        self.pipeline.layout,
                         0,
                         &[texture_descriptor_set],
                         &[],
                     );
-                    device.cmd_draw_indexed(cmd_buf, indices.len() as _, 1, 0, 0, 0);
+                    device.cmd_draw_indexed(cmd_buf, mesh.index_buf.index_count as _, 1, 0, 0, 0);
                 }
             }
         }
@@ -217,11 +285,7 @@ impl Renderer {
             );
 
             // Present
-            g::present(
-                &self.ctx,
-                image_index,
-                current_frame.render_finished_semaphore,
-            );
+            g::present(&self.ctx, image, current_frame.render_finished_semaphore);
 
             // Free buffers and memory
             self.ctx
@@ -244,6 +308,18 @@ impl Renderer {
         self.surface_size = vk::Extent2D { width, height };
     }
 
+    fn render_target(&mut self) -> Option<u32> {
+        let current_frame = self.current_frame().clone();
+        self.ctx.swapchain.acquire_image(
+            &self.ctx.device,
+            &self.ctx.physical_device,
+            current_frame.in_flight_fence,
+            current_frame.image_available_semaphore,
+            &mut self.resize_required,
+            &self.surface_size,
+        )
+    }
+
     fn advance_frame(&mut self) {
         self.frame_number = (self.frame_number + 1) % FRAMES_IN_FLIGHT;
     }
@@ -256,34 +332,33 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
+            self.ctx.device.device_wait_idle().unwrap();
+
+            for m in self.meshes.values() {
+                m.destroy(&self.ctx.device)
+            }
+
             for t in self.textures.values() {
                 t.destroy(&self.ctx.device);
             }
-            self.resources.destroy(&mut self.ctx);
+            self.ctx.device.destroy_sampler(self.sampler, None);
+
+            self.ctx
+                .device
+                .destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
+            self.ctx
+                .device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+
+            self.pipeline.destroy(&self.ctx.device);
+
+            self.ctx.device.destroy_render_pass(self.render_pass, None);
+
             self.ctx.device.destroy_command_pool(self.cmd_pool, None);
+
             self.sync_pool.destroy_all(&self.ctx.device);
         }
     }
-}
-
-// unsafe fn build_pipelines(ctx: &Context) -> SmallVec<[vk::Pipeline; 8]> {
-//     let (pipeline, pipeline_layout) =
-//         g::create_pipeline(&ctx, &shader_stages, render_pass, &descriptor_set_layouts);
-//     let pipeline = Pipeline {
-//         handle: pipeline,
-//         layout: pipeline_layout,
-//     };
-
-//     smallvec![pipeline]
-// }
-
-struct Resources {
-    render_pass: vk::RenderPass,
-    descriptor_pool: vk::DescriptorPool,
-    sampler: vk::Sampler,
-    uniforms: SmallVec<[(vk::Buffer, vk::DeviceMemory); 2]>,
-    material_descriptor_set_layout: vk::DescriptorSetLayout,
-    pipeline: Pipeline,
 }
 
 struct Pipeline {
@@ -291,61 +366,12 @@ struct Pipeline {
     layout: vk::PipelineLayout,
 }
 
-impl Resources {
-    pub fn new(ctx: &Context) -> Resources {
+impl DeviceResource for Pipeline {
+    fn destroy(&self, device: &erupt::DeviceLoader) {
         unsafe {
-            let vertex_shader =
-                Shader::new(SHADER_VERT, ShaderStage::Vertex).into_initialized(&ctx.device);
-            let fragment_shader =
-                Shader::new(SHADER_FRAG, ShaderStage::Fragment).into_initialized(&ctx.device);
-            let shader_stages = [vertex_shader.stage_info(), fragment_shader.stage_info()];
-
-            let render_pass = create_render_pass(&ctx);
-
-            let uniforms =
-                memory::create_uniform_buffers(&ctx, size_of::<Transform>(), FRAMES_IN_FLIGHT);
-            let descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
-
-            let texture_descriptor_set_layout = ds::descriptor_set_layout_1_texture(&ctx.device, 1);
-            let sampler = texture::create_sampler(&ctx);
-
-            let vertex_binding_descs = [Vertex::binding_desc()];
-            let vertex_attribute_descs = Vertex::attribute_descs();
-            let pipeline = create_pipeline(
-                ctx,
-                render_pass,
-                &shader_stages,
-                &vertex_binding_descs,
-                &vertex_attribute_descs,
-                &[texture_descriptor_set_layout],
-            );
-
-            drop(shader_stages);
-            vertex_shader.destroy(&ctx.device);
-            fragment_shader.destroy(&ctx.device);
-
-            Self {
-                descriptor_pool,
-                material_descriptor_set_layout: texture_descriptor_set_layout,
-                render_pass,
-                pipeline,
-                uniforms,
-                sampler,
-            }
+            device.destroy_pipeline(self.handle, None);
+            device.destroy_pipeline_layout(self.layout, None);
         }
-    }
-
-    pub unsafe fn destroy(&mut self, ctx: &mut Context) {
-        memory::release_resources(
-            ctx,
-            &self.uniforms,
-            self.descriptor_pool,
-            self.pipeline.handle,
-            self.pipeline.layout,
-            &[self.material_descriptor_set_layout],
-            self.render_pass,
-            self.sampler,
-        )
     }
 }
 
@@ -426,7 +452,7 @@ unsafe fn create_pipeline(
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
-    let image_extent = ctx.swapchain.image_extent();
+    let image_extent = ctx.swapchain.image_dimensions();
     let viewports = vec![vk::ViewportBuilder::new()
         .x(0.0)
         .y(0.0)

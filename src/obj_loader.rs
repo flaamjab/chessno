@@ -90,6 +90,7 @@ impl<'a> ObjLoader<'a> {
                 self.textures.insert(texture_id);
 
                 submeshes.push(Submesh {
+                    id: generate_id(),
                     texture_id,
                     start_index: submesh_start,
                     end_index: submesh_end,

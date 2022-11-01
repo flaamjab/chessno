@@ -1,36 +1,34 @@
-use std::collections::HashSet;
 use std::path::Path;
 
-use nalgebra::{Point3, Rotation3, Unit, Vector3, Vector4};
-use winit::event::VirtualKeyCode;
+use nalgebra::{Point3, Vector4};
 
 use crate::assets::Assets;
 use crate::camera::Camera;
+use crate::free_camera_control::FreeCameraControl;
+use crate::input_state::InputState;
 use crate::obj_loader::ObjLoader;
 use crate::object::Object;
 use crate::projection::Projection;
 use crate::scene::DynamicScene;
 use crate::scene::Scene;
-use crate::scene::Scenelike;
 use crate::transform::Transform;
 
 pub struct PlaygroundScene {
-    inner: Scene,
-
-    up: Unit<Vector3<f32>>,
-
-    camera_pos: Point3<f32>,
-    camera_dir: Unit<Vector3<f32>>,
-    camera_right: Unit<Vector3<f32>>,
-
-    move_speed: f32,
-    look_sensitivity: f32,
+    objects: Vec<Object>,
+    camera_control: FreeCameraControl,
 }
 
 impl PlaygroundScene {
     pub fn new(assets: &mut Assets) -> Self {
-        let up = Vector3::y_axis();
+        let objects = Self::setup_objects(assets);
+        let camera_control = Self::setup_camera();
+        Self {
+            objects,
+            camera_control,
+        }
+    }
 
+    fn setup_objects(assets: &mut Assets) -> Vec<Object> {
         let table_path = Path::new("assets/models/table/table.obj");
         let plant_path = Path::new("assets/models/indoor_plant/indoor plant_02.obj");
         let m1887_path = Path::new("assets/models/m1887/M1887.obj");
@@ -69,108 +67,34 @@ impl PlaygroundScene {
         //     }
         // }
 
-        let camera_pos = Point3::new(0.0, -1.0, -2.0);
-        let camera_dir = Unit::new_normalize(-camera_pos.coords);
-        let camera_right = Unit::new_normalize(up.cross(&camera_dir));
-
-        let projection = Projection::perspective(45.0, 0.1, 100.0);
-        let camera = Camera::new(&camera_pos, &camera_dir, projection);
-
-        Self {
-            inner: Scene {
-                objects,
-                cameras: vec![camera],
-            },
-            up,
-            camera_pos,
-            camera_dir,
-            camera_right,
-            move_speed: 5.0,
-            look_sensitivity: 150.0,
-        }
+        objects
     }
 
-    fn camera_change(
-        &mut self,
-        delta: f32,
-        pressed_keys: &HashSet<VirtualKeyCode>,
-    ) -> (Vector3<f32>, Rotation3<f32>, Rotation3<f32>) {
-        let mut camera_velocity = Vector3::zeros();
-        let mut rot_left_right = Rotation3::identity();
-        let mut rot_up_down = Rotation3::identity();
-
-        if pressed_keys.contains(&VirtualKeyCode::W) {
-            camera_velocity += self.camera_dir.as_ref();
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::A) {
-            camera_velocity -= self.camera_right.as_ref();
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::S) {
-            camera_velocity -= self.camera_dir.as_ref();
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::D) {
-            camera_velocity += self.camera_right.as_ref();
-        }
-        camera_velocity *= self.move_speed * delta;
-
-        let look_offset = (self.look_sensitivity * delta).to_radians();
-        if pressed_keys.contains(&VirtualKeyCode::Up) {
-            rot_up_down = Rotation3::from_axis_angle(&self.camera_right, look_offset);
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::Down) {
-            rot_up_down = Rotation3::from_axis_angle(&self.camera_right, -look_offset);
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::Left) {
-            rot_left_right = Rotation3::from_axis_angle(&self.up, look_offset);
-        }
-
-        if pressed_keys.contains(&VirtualKeyCode::Right) {
-            rot_left_right = Rotation3::from_axis_angle(&self.up, -look_offset);
-        }
-
-        (camera_velocity, rot_left_right, rot_up_down)
+    fn setup_camera() -> FreeCameraControl {
+        let camera_pos = Point3::new(0.0, -1.0, -2.0);
+        let camera_dir = -camera_pos.coords;
+        let projection = Projection::perspective(45.0, 0.1, 100.0);
+        let camera = Camera::new(&camera_pos, &camera_dir, projection);
+        FreeCameraControl::new(camera, 5.0, 60.0)
     }
 }
 
-impl Scenelike for PlaygroundScene {
+impl Scene for PlaygroundScene {
     fn active_camera(&self) -> &Camera {
-        &self.inner.cameras[0]
+        &self.camera_control.camera()
     }
 
     fn active_camera_mut(&mut self) -> &mut Camera {
-        &mut self.inner.cameras[0]
-    }
-
-    fn cameras(&self) -> &[Camera] {
-        &self.inner.cameras
+        self.camera_control.camera_mut()
     }
 
     fn objects(&self) -> &[Object] {
-        &self.inner.objects
+        &self.objects
     }
 }
 
 impl DynamicScene for PlaygroundScene {
-    fn update(
-        &mut self,
-        time_delta: f32,
-        pressed_keys: &HashSet<VirtualKeyCode>,
-        assets: &mut Assets,
-    ) {
-        let (camera_velocity, rot_left_right, rot_up_down) =
-            self.camera_change(time_delta, &pressed_keys);
-
-        self.camera_pos = self.camera_pos + camera_velocity;
-        self.camera_dir = rot_left_right * rot_up_down * self.camera_dir;
-        self.camera_right = Unit::new_normalize(self.camera_dir.cross(&self.up));
-
-        let camera = &mut self.inner.cameras[0];
-        camera.set_position(&self.camera_pos);
-        camera.set_direction(&self.camera_dir);
+    fn update(&mut self, time_delta: f32, input_state: &InputState, _assets: &mut Assets) {
+        self.camera_control.update(input_state, time_delta);
     }
 }

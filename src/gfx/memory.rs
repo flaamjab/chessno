@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::mem::{size_of, size_of_val};
+use std::mem::size_of_val;
 use std::ptr;
 
 use erupt::{vk, DeviceLoader};
@@ -11,40 +11,41 @@ use crate::gfx::geometry::Vertex;
 use crate::gfx::physical_device::PhysicalDevice;
 use crate::transform::Transform;
 
+use super::resource::DeviceResource;
+
 pub struct UniformBuffer {
     memory: vk::DeviceMemory,
     handle: vk::Buffer,
 }
 
-pub unsafe fn release_resources(
-    ctx: &mut Context,
-    uniforms: &[(vk::Buffer, vk::DeviceMemory)],
-    descriptor_pool: vk::DescriptorPool,
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    descriptor_set_layouts: &[vk::DescriptorSetLayout],
-    render_pass: vk::RenderPass,
-    sampler: vk::Sampler,
-) {
-    ctx.device.device_wait_idle().unwrap();
+#[derive(Debug)]
+pub struct VertexBuffer {
+    pub memory: vk::DeviceMemory,
+    pub handle: vk::Buffer,
+}
 
-    ctx.device.destroy_sampler(sampler, None);
-
-    for (b, m) in uniforms {
-        ctx.device.destroy_buffer(*b, None);
-        ctx.device.free_memory(*m, None);
+impl DeviceResource for VertexBuffer {
+    fn destroy(&self, device: &DeviceLoader) {
+        unsafe {
+            device.destroy_buffer(self.handle, None);
+            device.free_memory(self.memory, None);
+        }
     }
+}
 
-    ctx.device.destroy_descriptor_pool(descriptor_pool, None);
+#[derive(Debug)]
+pub struct IndexBuffer {
+    pub memory: vk::DeviceMemory,
+    pub handle: vk::Buffer,
+    pub index_count: usize,
+}
 
-    ctx.device.destroy_pipeline(pipeline, None);
-
-    ctx.device.destroy_render_pass(render_pass, None);
-
-    ctx.device.destroy_pipeline_layout(pipeline_layout, None);
-
-    for &layout in descriptor_set_layouts {
-        ctx.device.destroy_descriptor_set_layout(layout, None);
+impl DeviceResource for IndexBuffer {
+    fn destroy(&self, device: &DeviceLoader) {
+        unsafe {
+            device.destroy_buffer(self.handle, None);
+            device.free_memory(self.memory, None);
+        }
     }
 }
 

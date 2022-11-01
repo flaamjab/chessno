@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, path::Path};
+use std::{collections::HashMap, path::Path};
 
 use uuid::Uuid;
 
@@ -14,7 +14,7 @@ pub trait Asset {
     fn id(&self) -> AssetId;
 }
 
-pub const MISSING_TEXTURE: &str = "missing";
+pub const MISSING_TEXTURE: &str = "missing_texture";
 
 pub struct Assets {
     textures: HashMap<AssetId, Texture>,
@@ -63,6 +63,10 @@ impl Assets {
 
     pub fn textures(&self) -> impl Iterator<Item = &Texture> {
         self.textures.values()
+    }
+
+    pub fn meshes(&self) -> impl Iterator<Item = &Mesh> {
+        self.meshes.values()
     }
 
     fn record_name(&mut self, name: &str, asset: &impl Asset) {

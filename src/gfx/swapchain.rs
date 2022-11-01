@@ -71,7 +71,7 @@ impl Swapchain {
         in_flight_fence: vk::Fence,
         image_available_semaphore: vk::Semaphore,
         framebuffer_resized: &mut bool,
-        window_size: &vk::Extent2D,
+        surface_size: &vk::Extent2D,
     ) -> Option<u32> {
         unsafe {
             device
@@ -91,7 +91,7 @@ impl Swapchain {
                     .expect("failed to wait on queue");
                 *framebuffer_resized = false;
                 trace!("Recreating swapchain");
-                self.recreate(&device, &physical_device, self.surface, &window_size);
+                self.recreate(&device, &physical_device, self.surface, &surface_size);
                 return None;
             } else if maybe_image.raw != vk::Result::SUCCESS {
                 panic!("failed to acquire image from swapchain, aborting...");
@@ -161,7 +161,7 @@ impl Swapchain {
         Ref::map(self.framebuffers.borrow(), |o| o.as_deref().unwrap())
     }
 
-    pub fn image_extent(&self) -> &vk::Extent2D {
+    pub fn image_dimensions(&self) -> &vk::Extent2D {
         &self.image_extent
     }
 

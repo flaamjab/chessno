@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-use std::io;
-
-use obj::ObjError;
 
 use crate::assets::{generate_id, Asset, AssetId, Assets};
 use crate::gfx::geometry::Vertex;
+use crate::gfx::memory::{IndexBuffer, VertexBuffer};
+
+use super::resource::DeviceResource;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
@@ -18,9 +18,24 @@ pub struct Mesh {
 
 #[derive(Clone, Debug)]
 pub struct Submesh {
+    pub id: AssetId,
     pub texture_id: AssetId,
     pub start_index: usize,
     pub end_index: usize,
+}
+
+#[derive(Debug)]
+pub struct GpuResidentMesh {
+    pub texture_id: AssetId,
+    pub vertex_buf: VertexBuffer,
+    pub index_buf: IndexBuffer,
+}
+
+impl DeviceResource for GpuResidentMesh {
+    fn destroy(&self, device: &erupt::DeviceLoader) {
+        self.vertex_buf.destroy(device);
+        self.index_buf.destroy(device);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -79,6 +94,7 @@ impl Mesh {
             bbox: bbox.clone(),
             textures: HashSet::new(),
             submeshes: vec![Submesh {
+                id: generate_id(),
                 start_index: 0,
                 end_index: n_indices,
                 texture_id,
@@ -87,23 +103,5 @@ impl Mesh {
         assets.insert_mesh(name, mesh);
 
         mesh_id
-    }
-}
-
-#[derive(Debug)]
-pub enum Error {
-    IOError(io::Error),
-    ObjError(obj::ObjError),
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Error::IOError(e)
-    }
-}
-
-impl From<ObjError> for Error {
-    fn from(e: ObjError) -> Self {
-        Error::ObjError(e)
     }
 }

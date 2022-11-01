@@ -3,8 +3,8 @@ use nalgebra::{Matrix4, Point3, Vector3};
 use crate::projection::Projection;
 
 pub struct Camera {
-    position: Point3<f32>,
-    direction: Vector3<f32>,
+    pub position: Point3<f32>,
+    pub direction: Vector3<f32>,
     projection: Projection,
 }
 
@@ -15,14 +15,6 @@ impl Camera {
             direction: *direction,
             projection,
         }
-    }
-
-    pub fn set_position(&mut self, position: &Point3<f32>) {
-        self.position = *position;
-    }
-
-    pub fn set_direction(&mut self, direction: &Vector3<f32>) {
-        self.direction = *direction;
     }
 
     pub fn matrix(&self) -> Matrix4<f32> {

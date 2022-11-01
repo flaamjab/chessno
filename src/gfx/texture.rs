@@ -14,7 +14,7 @@ use crate::gfx::g;
 use crate::gfx::memory;
 
 use super::physical_device::PhysicalDevice;
-use super::vulkan_resource::DeviceResource;
+use super::resource::DeviceResource;
 
 enum TextureState {
     Unloaded,
