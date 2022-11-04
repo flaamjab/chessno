@@ -20,7 +20,6 @@ use crate::gfx::{
     sync_pool::SyncPool,
     texture::{self, GpuResidentTexture, Texture},
 };
-use crate::logging::debug;
 use crate::scene::Scene;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
@@ -162,7 +161,7 @@ impl Renderer {
                     let indices = &mesh.indices[submesh.start_index..submesh.end_index];
                     let (index_buf, index_mem) = memory::create_index_buffer(
                         &self.ctx,
-                        &indices,
+                        indices,
                         copy_queue_family,
                         copy_queue,
                     );

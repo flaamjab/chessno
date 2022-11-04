@@ -1,7 +1,5 @@
-use std::{thread::sleep, time::Duration};
-
 use winit::{
-    event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent},
+    event::{DeviceEvent, ElementState, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
@@ -62,13 +60,10 @@ pub fn linux_main() {
             WindowEvent::Resized(new_size) => {
                 renderer.handle_resize(new_size);
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                debug!("{:?}@{:?}", button, state);
-                match state {
-                    ElementState::Pressed => input_state.set_pressed(Key::MouseButton(button)),
-                    ElementState::Released => input_state.set_released(Key::MouseButton(button)),
-                }
-            }
+            WindowEvent::MouseInput { state, button, .. } => match state {
+                ElementState::Pressed => input_state.set_pressed(Key::MouseButton(button)),
+                ElementState::Released => input_state.set_released(Key::MouseButton(button)),
+            },
             WindowEvent::KeyboardInput { input, .. } => match input.virtual_keycode {
                 Some(code) => match input.state {
                     ElementState::Pressed => {

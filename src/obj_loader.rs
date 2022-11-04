@@ -106,7 +106,7 @@ impl<'a> ObjLoader<'a> {
         if let Some(material) = &group.material {
             if let ObjMaterial::Mtl(material) = material {
                 if let Some(diffuse) = &material.map_kd {
-                    let path = self.texture_path(&obj.path, &diffuse);
+                    let path = self.texture_path(&obj.path, diffuse);
                     let name = self.texture_name(&path);
                     if let Some(texture_id) = self.assets.id_of(&name) {
                         texture_id

@@ -76,7 +76,7 @@ impl PlaygroundScene {
         let camera_dir = -camera_pos.coords;
         let projection = Projection::perspective(45.0, 0.1, 100.0);
         let camera = Camera::new(&camera_pos, &camera_dir, projection);
-        FreeCameraControl::new(camera, 5.0, 60.0)
+        FreeCameraControl::new(camera, 3.5, 30.0)
     }
 }
 

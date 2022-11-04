@@ -75,7 +75,7 @@ impl FreeCameraControl {
         }
 
         if lmb_held {
-            let modifier = time_delta;
+            let modifier = self.sensitivity * time_delta;
             rot_left_right =
                 Rotation3::from_axis_angle(&self.up, -(mouse_offset.0 * modifier).to_radians());
             rot_up_down = Rotation3::from_axis_angle(
