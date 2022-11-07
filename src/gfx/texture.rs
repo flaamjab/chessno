@@ -1,5 +1,8 @@
 use std::ffi::c_void;
 use std::io;
+use std::io::BufRead;
+use std::io::Read;
+use std::io::Seek;
 use std::path::Path;
 
 use erupt::{vk, DeviceLoader};
@@ -7,6 +10,7 @@ use image::io::Reader as ImageReader;
 use image::EncodableLayout;
 use image::RgbaImage;
 
+use crate::asset_locator::AssetLocator;
 use crate::assets::generate_id;
 use crate::assets::{Asset, AssetId};
 use crate::gfx::context::Context;
@@ -58,8 +62,9 @@ impl DeviceResource for GpuResidentTexture {
 }
 
 impl Texture {
-    pub fn from_file(path: &Path) -> io::Result<Self> {
-        let image = ImageReader::open(path)?
+    pub fn from_reader<R: BufRead + Seek>(reader: &mut R) -> io::Result<Self> {
+        let image = ImageReader::new(reader)
+            .with_guessed_format()?
             .decode()
             .expect("failed to decode image at {:path}");
         let id = generate_id();

@@ -172,6 +172,7 @@ dependencies = [
  "log",
  "memoffset",
  "nalgebra",
+ "ndk",
  "ndk-context",
  "ndk-glue",
  "obj",

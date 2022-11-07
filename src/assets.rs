@@ -2,7 +2,10 @@ use std::{collections::HashMap, path::Path};
 
 use uuid::Uuid;
 
-use crate::gfx::{mesh::Mesh, texture::Texture};
+use crate::{
+    asset_locator::AssetLocator,
+    gfx::{mesh::Mesh, texture::Texture},
+};
 
 pub type AssetId = u128;
 
@@ -14,25 +17,35 @@ pub trait Asset {
     fn id(&self) -> AssetId;
 }
 
-pub const MISSING_TEXTURE: &str = "missing_texture";
+pub const FALLBACK_TEXTURE: &str = "fallback_texture";
 
 pub struct Assets {
     textures: HashMap<AssetId, Texture>,
     meshes: HashMap<AssetId, Mesh>,
     name_map: HashMap<String, AssetId>,
+    asset_locator: AssetLocator,
 }
 
 impl Assets {
-    pub fn new() -> Self {
-        let missing_texture = Texture::from_file(Path::new("assets/textures/missing.png"))
-            .expect("failed to load missing texture");
-        let name_map = HashMap::from_iter([(MISSING_TEXTURE.to_string(), missing_texture.id())]);
-        let textures = HashMap::from_iter([(missing_texture.id(), missing_texture)]);
+    pub fn new(asset_locator: AssetLocator) -> Self {
+        let fallback_texture_path = Path::new("textures/missing.png");
+        let mut texture_reader = asset_locator.open(&fallback_texture_path).unwrap();
+        let fallback_texture =
+            Texture::from_reader(&mut texture_reader).expect("failed to load missing texture");
+
+        let name_map = HashMap::from_iter([(FALLBACK_TEXTURE.to_string(), fallback_texture.id())]);
+        let textures = HashMap::from_iter([(fallback_texture.id(), fallback_texture)]);
+
         Self {
             meshes: HashMap::new(),
             textures,
             name_map,
+            asset_locator,
         }
+    }
+
+    pub fn asset_locator(&self) -> &AssetLocator {
+        &self.asset_locator
     }
 
     pub fn insert_texture(&mut self, name: &str, texture: Texture) {

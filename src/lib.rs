@@ -1,3 +1,4 @@
+use asset_locator::AssetLocator;
 use winit::{
     event::{DeviceEvent, ElementState, Event, WindowEvent},
     event_loop::EventLoop,
@@ -49,7 +50,8 @@ pub fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut assets = Assets::new();
+    let asset_locator = AssetLocator::new();
+    let mut assets = Assets::new(asset_locator);
     let mut renderer = Renderer::new(TITLE);
 
     let mut timer = Timer::new();
@@ -57,10 +59,18 @@ pub fn main() {
 
     let mut scene = PlaygroundScene::new(&mut assets);
     let mut focus = false;
+    let mut started = false;
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::Resumed => {
-            debug!("Resumed")
+            debug!("Resumed");
+            if !renderer.is_initialized() {
+                renderer.initialize_with_window(&window);
+                let textures: Vec<_> = assets.textures().collect();
+                let meshes: Vec<_> = assets.meshes().collect();
+                renderer.use_textures(&textures);
+                renderer.use_meshes(&meshes);
+            }
         }
         Event::Suspended => {
             debug!("Suspended")
@@ -73,15 +83,8 @@ pub fn main() {
         },
         Event::WindowEvent { event, .. } => match event {
             WindowEvent::Focused(value) => {
+                debug!("Focused: {value}");
                 focus = value;
-                if !renderer.is_initialized() {
-                    renderer.initialize_with_window(&window);
-                    let textures: Vec<_> = assets.textures().collect();
-                    let meshes: Vec<_> = assets.meshes().collect();
-                    renderer.use_textures(&textures);
-                    renderer.use_meshes(&meshes);
-                    focus = true;
-                }
             }
             WindowEvent::Resized(new_size) => {
                 renderer.handle_resize(new_size);
@@ -115,11 +118,14 @@ pub fn main() {
 
             scene.update(&window, &input_state, delta, &mut assets);
 
-            if focus {
+            if renderer.is_initialized() && (focus || !started) {
                 renderer.draw(&mut scene, &mut assets);
             }
 
             input_state.end_frame();
+            if !started {
+                started = true;
+            }
         }
         _ => {}
     })

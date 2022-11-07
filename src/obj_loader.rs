@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use log::{trace, warn};
-use obj::{Group, Obj, ObjMaterial, SimplePolygon};
+use obj::{Group, Material, Mtl, Obj, ObjData, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
 use crate::assets::Asset;
@@ -32,15 +32,25 @@ impl<'a> ObjLoader<'a> {
         }
     }
 
-    pub fn load_from_file(&mut self, path: &Path, name: &str) -> AssetId {
-        let mut obj = Obj::load(path).expect("failed to load OBJ file");
+    pub fn load(&mut self, path: &Path, name: &str) -> AssetId {
+        let locator = self.assets.asset_locator();
+        let reader = locator.open(path).expect("make sure requested file exists");
+        let obj_data = ObjData::load_buf(reader).expect("make sure the file format is correct OBJ");
+        let mut obj = Obj {
+            data: obj_data,
+            path: path.parent().unwrap().into(),
+        };
 
         let vertex_count = obj.data.position.len();
         self.vertices = vec![Vertex::zeroed(); vertex_count];
         self.indices = Vec::with_capacity(vertex_count);
 
-        obj.load_mtls()
-            .expect("failed to load one or more MTL files");
+        obj.load_mtls_fn(|path, mat_name| {
+            let mtl_path = path.join(mat_name);
+            eprintln!("Material path: {mtl_path:?}");
+            locator.open(&mtl_path)
+        })
+        .expect("make sure material files exist");
 
         let submeshes = self.assemble(&obj);
 
@@ -102,32 +112,32 @@ impl<'a> ObjLoader<'a> {
     }
 
     fn texture(&mut self, obj: &Obj, group: &Group) -> AssetId {
-        let missing_texture_id = self.assets.id_of(FALLBACK_TEXTURE).unwrap();
+        let fallback_texture_id = self.assets.id_of(FALLBACK_TEXTURE).unwrap();
         if let Some(material) = &group.material {
             if let ObjMaterial::Mtl(material) = material {
                 if let Some(diffuse) = &material.map_kd {
                     let path = self.texture_path(&obj.path, diffuse);
                     let name = self.texture_name(&path);
                     if let Some(texture_id) = self.assets.id_of(&name) {
-                        texture_id
+                        return texture_id;
                     } else {
-                        Texture::from_file(&path)
+                        let asset_locator = self.assets.asset_locator();
+                        return asset_locator
+                            .open(&path)
+                            .and_then(|mut tr| Texture::from_reader(&mut tr))
+                            .map_err(|e| warn!("Failed to load texture {path:?}: {e}"))
                             .map(|t| {
                                 let id = t.id();
                                 self.assets.insert_texture(&name, t);
                                 id
                             })
-                            .unwrap_or(missing_texture_id)
+                            .unwrap_or(fallback_texture_id);
                     }
-                } else {
-                    missing_texture_id
                 }
-            } else {
-                missing_texture_id
             }
-        } else {
-            missing_texture_id
         }
+
+        fallback_texture_id
     }
 
     /// Creates vertices for a polygon, looking up actual data within `obj` by indices in `poly`.
@@ -190,12 +200,14 @@ impl<'a> ObjLoader<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::asset_locator::AssetLocator;
 
     #[test]
     fn test_model_loads_successfully() {
-        let path = Path::new("assets/models/indoor plant_02.obj");
-        let mut assets = Assets::new();
+        let path = Path::new("models/indoor_plant/indoor plant_02.obj");
+        let asset_locator = AssetLocator::new();
+        let mut assets = Assets::new(asset_locator);
         let mut loader = ObjLoader::new(&mut assets);
-        let _mesh = loader.load_from_file(path, "plant");
+        let _mesh = loader.load(path, "plant");
     }
 }

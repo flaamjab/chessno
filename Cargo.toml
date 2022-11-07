@@ -24,4 +24,5 @@ crate-type = ["lib", "cdylib"]
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-glue = {  version = "0.7.0", features = ["logger"] }
 ndk-context = "0.1.1"
+ndk = "0.7.0"
 jni = "0.20.0"
