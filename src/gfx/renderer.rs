@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 use std::mem::size_of;
 use std::{collections::HashMap, ffi::c_void};
 
-use erupt::vk;
+use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -17,7 +17,6 @@ use crate::gfx::{
     resource::DeviceResource,
     shader::{Shader, ShaderStage},
     spatial::Spatial,
-    sync_pool::SyncPool,
     texture::{self, GpuResidentTexture, Texture},
 };
 use crate::scene::Scene;
@@ -28,11 +27,11 @@ const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
 const FRAMES_IN_FLIGHT: usize = 2;
 
 pub struct Renderer {
-    ctx: Context,
-    sync_pool: SyncPool,
+    ctx: Option<Context>,
+
     frames_in_flight: SmallVec<[Frame; FRAMES_IN_FLIGHT]>,
     frame_number: usize,
-    cmd_pool: vk::CommandPool,
+    has_window_target: bool,
 
     textures: HashMap<AssetId, GpuResidentTexture>,
     texture_descriptor_sets: HashMap<AssetId, vk::DescriptorSet>,
@@ -40,7 +39,7 @@ pub struct Renderer {
 
     meshes: HashMap<AssetId, GpuResidentMesh>,
 
-    resize_required: bool,
+    swapchain_needs_resize: bool,
     surface_size: vk::Extent2D,
 
     descriptor_pool: vk::DescriptorPool,
@@ -48,6 +47,8 @@ pub struct Renderer {
 
     render_pass: vk::RenderPass,
     pipeline: Pipeline,
+
+    app_name: String,
 }
 
 #[derive(Clone)]
@@ -59,32 +60,53 @@ struct Frame {
 }
 
 impl Renderer {
-    pub fn new(app_name: &str, window: &Window) -> Self {
-        let ctx = Context::new(window, app_name, "No Engine");
-        let mut sync_pool = SyncPool::new();
-        unsafe {
-            let cmd_pool = memory::create_command_pool(
-                &ctx.device,
-                ctx.physical_device.queue_families.graphics,
-            );
-            let cmd_bufs = memory::create_command_buffers(&ctx.device, cmd_pool, FRAMES_IN_FLIGHT);
+    pub fn new(app_name: &str) -> Self {
+        Self {
+            ctx: None,
+            frames_in_flight: SmallVec::new(),
+            frame_number: 0,
+            descriptor_pool: vk::DescriptorPool::null(),
+            texture_descriptor_set_layout: vk::DescriptorSetLayout::null(),
+            texture_descriptor_sets: HashMap::new(),
+            meshes: HashMap::new(),
+            pipeline: Pipeline::default(),
+            render_pass: vk::RenderPass::null(),
+            sampler: vk::Sampler::null(),
+            textures: HashMap::new(),
+            swapchain_needs_resize: false,
+            surface_size: vk::Extent2D::default(),
+            has_window_target: false,
+            app_name: app_name.to_string(),
+        }
+    }
 
-            let frames_in_flight = (0..FRAMES_IN_FLIGHT)
+    pub fn is_initialized(&self) -> bool {
+        self.has_window_target
+    }
+
+    pub fn initialize_with_window(&mut self, window: &Window) {
+        let mut ctx = Context::new(window, &self.app_name, "No Engine");
+        unsafe {
+            let cmd_bufs =
+                memory::create_command_buffers(&ctx.device, ctx.cmd_pool, FRAMES_IN_FLIGHT);
+
+            self.frames_in_flight = (0..FRAMES_IN_FLIGHT)
                 .map(|n| Frame {
-                    image_available_semaphore: sync_pool.semaphore(&ctx.device),
-                    render_finished_semaphore: sync_pool.semaphore(&ctx.device),
-                    in_flight_fence: sync_pool.fence(&ctx.device, true),
+                    image_available_semaphore: ctx.sync_pool.semaphore(&ctx.device),
+                    render_finished_semaphore: ctx.sync_pool.semaphore(&ctx.device),
+                    in_flight_fence: ctx.sync_pool.fence(&ctx.device, true),
                     cmd_buf: cmd_bufs[n],
                 })
                 .collect();
 
             let render_pass = create_render_pass(&ctx);
+            self.render_pass = render_pass;
 
-            let descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
+            self.descriptor_pool = ds::create_descriptor_pool(&ctx.device, FRAMES_IN_FLIGHT);
 
-            let material_descriptor_set_layout =
-                ds::descriptor_set_layout_1_texture(&ctx.device, 1);
-            let sampler = texture::create_sampler(&ctx);
+            let texture_descriptor_set_layout = ds::descriptor_set_layout_1_texture(&ctx.device, 1);
+            self.texture_descriptor_set_layout = texture_descriptor_set_layout;
+            self.sampler = texture::create_sampler(&ctx);
 
             let vertex_shader =
                 Shader::new(SHADER_VERT, ShaderStage::Vertex).into_initialized(&ctx.device);
@@ -94,229 +116,250 @@ impl Renderer {
 
             let vertex_binding_descs = [Vertex::binding_desc()];
             let vertex_attribute_descs = Vertex::attribute_descs();
-            let pipeline = create_pipeline(
-                &ctx,
+            self.pipeline = create_pipeline(
+                &ctx.device,
                 render_pass,
                 &shader_stages,
                 &vertex_binding_descs,
                 &vertex_attribute_descs,
-                &[material_descriptor_set_layout],
+                &[texture_descriptor_set_layout],
             );
 
             vertex_shader.destroy(&ctx.device);
             fragment_shader.destroy(&ctx.device);
 
-            Self {
-                ctx,
-                sync_pool,
-                cmd_pool,
-                frames_in_flight,
-                frame_number: 0,
-                descriptor_pool,
-                texture_descriptor_set_layout: material_descriptor_set_layout,
-                texture_descriptor_sets: HashMap::new(),
-                meshes: HashMap::new(),
-                pipeline,
-                render_pass,
-                sampler,
-                textures: HashMap::new(),
-                resize_required: false,
-                surface_size: vk::Extent2D::default(),
-            }
+            self.ctx = Some(ctx);
+            self.has_window_target = true;
         }
     }
 
     pub fn use_textures(&mut self, textures: &[&Texture]) {
-        unsafe {
-            for t in textures {
-                if !self.textures.contains_key(&t.id()) {
-                    self.textures.insert(t.id(), t.load(&self.ctx));
+        if let Some(ctx) = &self.ctx {
+            unsafe {
+                for t in textures {
+                    if !self.textures.contains_key(&t.id()) {
+                        self.textures.insert(t.id(), t.load(ctx));
+                    }
                 }
-            }
 
-            let textures: SmallVec<[&GpuResidentTexture; 16]> = self.textures.values().collect();
-            self.texture_descriptor_sets = ds::texture_descriptor_sets(
-                &self.ctx.device,
-                self.descriptor_pool,
-                self.texture_descriptor_set_layout,
-                1,
-                &textures,
-                self.sampler,
-            );
+                let textures: SmallVec<[&GpuResidentTexture; 16]> =
+                    self.textures.values().collect();
+                self.texture_descriptor_sets = ds::texture_descriptor_sets(
+                    &ctx.device,
+                    self.descriptor_pool,
+                    self.texture_descriptor_set_layout,
+                    1,
+                    &textures,
+                    self.sampler,
+                );
+            }
         }
     }
 
     pub fn use_meshes(&mut self, meshes: &[&Mesh]) {
-        let copy_queue = self.ctx.queues.graphics;
-        let copy_queue_family = self.ctx.physical_device.queue_families.graphics;
-        unsafe {
-            for mesh in meshes {
-                for submesh in &mesh.submeshes {
-                    let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
-                        &self.ctx,
-                        &mesh.vertices,
-                        copy_queue_family,
-                        copy_queue,
-                    );
-                    let indices = &mesh.indices[submesh.start_index..submesh.end_index];
-                    let (index_buf, index_mem) = memory::create_index_buffer(
-                        &self.ctx,
-                        indices,
-                        copy_queue_family,
-                        copy_queue,
-                    );
+        if let Some(ctx) = &self.ctx {
+            let copy_queue = ctx.graphics_queue;
+            let copy_queue_family = ctx.physical_device.graphics_queue_family;
+            unsafe {
+                for mesh in meshes {
+                    for submesh in &mesh.submeshes {
+                        let (vertex_buf, vertex_mem) = memory::create_vertex_buffer(
+                            &ctx,
+                            &mesh.vertices,
+                            copy_queue_family,
+                            copy_queue,
+                        );
+                        let indices = &mesh.indices[submesh.start_index..submesh.end_index];
+                        let (index_buf, index_mem) = memory::create_index_buffer(
+                            &ctx,
+                            indices,
+                            copy_queue_family,
+                            copy_queue,
+                        );
 
-                    let vertex_buf = VertexBuffer {
-                        handle: vertex_buf,
-                        memory: vertex_mem,
-                    };
+                        let vertex_buf = VertexBuffer {
+                            handle: vertex_buf,
+                            memory: vertex_mem,
+                        };
 
-                    let index_buf = IndexBuffer {
-                        handle: index_buf,
-                        memory: index_mem,
-                        index_count: indices.len(),
-                    };
+                        let index_buf = IndexBuffer {
+                            handle: index_buf,
+                            memory: index_mem,
+                            index_count: indices.len(),
+                        };
 
-                    let gpu_mesh = GpuResidentMesh {
-                        texture_id: submesh.texture_id,
-                        index_buf,
-                        vertex_buf,
-                    };
+                        let gpu_mesh = GpuResidentMesh {
+                            texture_id: submesh.texture_id,
+                            index_buf,
+                            vertex_buf,
+                        };
 
-                    match self.meshes.entry(submesh.id) {
-                        Entry::Vacant(e) => {
-                            e.insert(gpu_mesh);
-                        }
-                        _ => {}
-                    };
+                        match self.meshes.entry(submesh.id) {
+                            Entry::Vacant(e) => {
+                                e.insert(gpu_mesh);
+                            }
+                            _ => {}
+                        };
+                    }
                 }
             }
         }
     }
 
     pub fn draw(&mut self, scene: &mut impl Scene, assets: &mut Assets) {
-        scene.active_camera_mut().set_viewport_dimensions(
-            self.surface_size.width as f32,
-            self.surface_size.height as f32,
-        );
-
         let image = match self.render_target() {
             Some(image_index) => image_index,
             None => return,
         };
 
-        let current_frame = self.current_frame();
-        unsafe {
-            let framebuffers = self
-                .ctx
-                .swapchain
-                .framebuffers(&self.ctx.device, self.render_pass);
-            g::begin_draw(
-                &self.ctx.device,
-                current_frame.cmd_buf,
-                self.render_pass,
-                framebuffers[image as usize],
-                self.ctx.swapchain.image_dimensions(),
+        if let Some(ctx) = &self.ctx {
+            scene.active_camera_mut().set_viewport_dimensions(
+                self.surface_size.width as f32,
+                self.surface_size.height as f32,
             );
-        }
 
-        let objects = scene.objects();
-        let camera = scene.active_camera();
-        let mut free_queue = Vec::with_capacity(objects.len());
-        for o in objects {
-            let mesh = assets
-                .get_mesh_by_id(o.mesh_id)
-                .expect("failed to fetch mesh that is supposed to be loaded");
-            unsafe {
-                for sm in &mesh.submeshes {
-                    let mvp = Spatial(camera.matrix() * o.transform.matrix());
+            if let Some(swapchain) = &ctx.swapchain {
+                let current_frame = self.current_frame();
+                unsafe {
+                    let framebuffers = swapchain.framebuffers(&ctx.device, self.render_pass);
+                    g::begin_draw(
+                        &ctx.device,
+                        current_frame.cmd_buf,
+                        self.render_pass,
+                        framebuffers[image as usize],
+                        swapchain.image_dimensions(),
+                    );
+                }
 
-                    let device = &self.ctx.device;
-                    let cmd_buf = self.current_frame().cmd_buf;
+                let objects = scene.objects();
+                let camera = scene.active_camera();
+                let mut free_queue = Vec::with_capacity(objects.len());
+                for o in objects {
+                    let mesh = assets
+                        .get_mesh_by_id(o.mesh_id)
+                        .expect("failed to fetch mesh that is supposed to be loaded");
+                    unsafe {
+                        for sm in &mesh.submeshes {
+                            let mvp = Spatial(camera.matrix() * o.transform.matrix());
 
-                    self.ctx.device.cmd_bind_pipeline(
-                        cmd_buf,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        self.pipeline.handle,
+                            let device = &ctx.device;
+                            let cmd_buf = self.current_frame().cmd_buf;
+
+                            ctx.device.cmd_bind_pipeline(
+                                cmd_buf,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline.handle,
+                            );
+
+                            let mesh = &self.meshes[&sm.id];
+                            device.cmd_bind_vertex_buffers(
+                                cmd_buf,
+                                0,
+                                &[mesh.vertex_buf.handle],
+                                &[0],
+                            );
+                            device.cmd_bind_index_buffer(
+                                cmd_buf,
+                                mesh.index_buf.handle,
+                                0,
+                                vk::IndexType::UINT16,
+                            );
+
+                            device.cmd_push_constants(
+                                cmd_buf,
+                                self.pipeline.layout,
+                                vk::ShaderStageFlags::VERTEX,
+                                0,
+                                size_of::<Spatial>() as _,
+                                &mvp as *const Spatial as *const c_void,
+                            );
+
+                            let texture_descriptor_set =
+                                self.texture_descriptor_sets[&sm.texture_id];
+                            device.cmd_bind_descriptor_sets(
+                                cmd_buf,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline.layout,
+                                0,
+                                &[texture_descriptor_set],
+                                &[],
+                            );
+                            device.cmd_draw_indexed(
+                                cmd_buf,
+                                mesh.index_buf.index_count as _,
+                                1,
+                                0,
+                                0,
+                                0,
+                            );
+                        }
+                    }
+                }
+
+                unsafe {
+                    // End draw
+                    g::end_draw(
+                        &ctx.device,
+                        ctx.graphics_queue,
+                        current_frame.cmd_buf,
+                        current_frame.image_available_semaphore,
+                        current_frame.render_finished_semaphore,
+                        current_frame.in_flight_fence,
                     );
 
-                    let mesh = &self.meshes[&sm.id];
-                    device.cmd_bind_vertex_buffers(cmd_buf, 0, &[mesh.vertex_buf.handle], &[0]);
-                    device.cmd_bind_index_buffer(
-                        cmd_buf,
-                        mesh.index_buf.handle,
-                        0,
-                        vk::IndexType::UINT16,
+                    // Present
+                    g::present(
+                        &ctx.device,
+                        &swapchain,
+                        image,
+                        current_frame.render_finished_semaphore,
                     );
 
-                    device.cmd_push_constants(
-                        cmd_buf,
-                        self.pipeline.layout,
-                        vk::ShaderStageFlags::VERTEX,
-                        0,
-                        size_of::<Spatial>() as _,
-                        &mvp as *const Spatial as *const c_void,
-                    );
-
-                    let texture_descriptor_set = self.texture_descriptor_sets[&sm.texture_id];
-                    device.cmd_bind_descriptor_sets(
-                        cmd_buf,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        self.pipeline.layout,
-                        0,
-                        &[texture_descriptor_set],
-                        &[],
-                    );
-                    device.cmd_draw_indexed(cmd_buf, mesh.index_buf.index_count as _, 1, 0, 0, 0);
+                    // Free buffers and memory
+                    ctx.device
+                        .queue_wait_idle(ctx.graphics_queue)
+                        .expect("failed to wait for queue");
+                    for (buf, mem) in free_queue.drain(..) {
+                        ctx.device.destroy_buffer(buf, None);
+                        ctx.device.free_memory(mem, None);
+                    }
                 }
             }
+
+            self.advance_frame()
         }
-
-        unsafe {
-            // End draw
-            g::end_draw(
-                &self.ctx.device,
-                self.ctx.queues.graphics,
-                current_frame.cmd_buf,
-                current_frame.image_available_semaphore,
-                current_frame.render_finished_semaphore,
-                current_frame.in_flight_fence,
-            );
-
-            // Present
-            g::present(&self.ctx, image, current_frame.render_finished_semaphore);
-
-            // Free buffers and memory
-            self.ctx
-                .device
-                .queue_wait_idle(self.ctx.queues.graphics)
-                .expect("failed to wait for queue");
-            for (buf, mem) in free_queue.drain(..) {
-                self.ctx.device.destroy_buffer(buf, None);
-                self.ctx.device.free_memory(mem, None);
-            }
-        }
-
-        self.advance_frame()
     }
 
     pub fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
-        self.resize_required = true;
+        self.swapchain_needs_resize = true;
 
         let PhysicalSize { width, height } = new_size;
         self.surface_size = vk::Extent2D { width, height };
     }
 
     fn render_target(&mut self) -> Option<u32> {
-        let current_frame = self.current_frame().clone();
-        self.ctx.swapchain.acquire_image(
-            &self.ctx.device,
-            &self.ctx.physical_device,
-            current_frame.in_flight_fence,
-            current_frame.image_available_semaphore,
-            &mut self.resize_required,
-            &self.surface_size,
-        )
+        if self.ctx.is_some() {
+            let current_frame = self.current_frame().clone();
+            let ctx = self.ctx.as_mut().unwrap();
+            if let Some(swapchain) = &mut ctx.swapchain {
+                match swapchain.acquire_image(
+                    &ctx.device,
+                    &ctx.physical_device,
+                    current_frame.in_flight_fence,
+                    current_frame.image_available_semaphore,
+                    &self.surface_size,
+                    self.swapchain_needs_resize,
+                ) {
+                    None => {
+                        self.swapchain_needs_resize = false;
+                        return None;
+                    }
+                    image => return image,
+                }
+            }
+        }
+
+        None
     }
 
     fn advance_frame(&mut self) {
@@ -331,31 +374,27 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            self.ctx.device.device_wait_idle().unwrap();
+            if let Some(ctx) = &self.ctx {
+                ctx.device.device_wait_idle().unwrap();
 
-            for m in self.meshes.values() {
-                m.destroy(&self.ctx.device)
+                for m in self.meshes.values() {
+                    m.destroy(&ctx.device)
+                }
+
+                for t in self.textures.values() {
+                    t.destroy(&ctx.device);
+                }
+                ctx.device.destroy_sampler(self.sampler, None);
+
+                ctx.device
+                    .destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
+                ctx.device
+                    .destroy_descriptor_pool(self.descriptor_pool, None);
+
+                self.pipeline.destroy(&ctx.device);
+
+                ctx.device.destroy_render_pass(self.render_pass, None);
             }
-
-            for t in self.textures.values() {
-                t.destroy(&self.ctx.device);
-            }
-            self.ctx.device.destroy_sampler(self.sampler, None);
-
-            self.ctx
-                .device
-                .destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
-            self.ctx
-                .device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-
-            self.pipeline.destroy(&self.ctx.device);
-
-            self.ctx.device.destroy_render_pass(self.render_pass, None);
-
-            self.ctx.device.destroy_command_pool(self.cmd_pool, None);
-
-            self.sync_pool.destroy_all(&self.ctx.device);
         }
     }
 }
@@ -363,6 +402,15 @@ impl Drop for Renderer {
 struct Pipeline {
     handle: vk::Pipeline,
     layout: vk::PipelineLayout,
+}
+
+impl Default for Pipeline {
+    fn default() -> Self {
+        Self {
+            handle: vk::Pipeline::null(),
+            layout: vk::PipelineLayout::null(),
+        }
+    }
 }
 
 impl DeviceResource for Pipeline {
@@ -436,7 +484,7 @@ unsafe fn create_render_pass(ctx: &Context) -> vk::RenderPass {
 }
 
 unsafe fn create_pipeline(
-    ctx: &Context,
+    device: &DeviceLoader,
     render_pass: vk::RenderPass,
     shader_stages: &[vk::PipelineShaderStageCreateInfoBuilder],
     vertex_binding_descs: &[vk::VertexInputBindingDescriptionBuilder],
@@ -451,16 +499,15 @@ unsafe fn create_pipeline(
         .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
         .primitive_restart_enable(false);
 
-    let image_extent = ctx.swapchain.image_dimensions();
     let viewports = vec![vk::ViewportBuilder::new()
         .x(0.0)
         .y(0.0)
-        .width(image_extent.width as f32)
-        .height(image_extent.height as f32)
+        .width(0.0)
+        .height(0.0)
         .max_depth(1.0)];
     let scissors = vec![vk::Rect2DBuilder::new()
         .offset(vk::Offset2D { x: 0, y: 0 })
-        .extent(*image_extent)];
+        .extent(vk::Extent2D::default())];
     let viewport_state = vk::PipelineViewportStateCreateInfoBuilder::new()
         .viewports(&viewports)
         .scissors(&scissors);
@@ -498,8 +545,7 @@ unsafe fn create_pipeline(
     let pipeline_layout_info = vk::PipelineLayoutCreateInfoBuilder::new()
         .set_layouts(&descriptor_set_layouts)
         .push_constant_ranges(&push_constant_ranges);
-    let pipeline_layout = ctx
-        .device
+    let pipeline_layout = device
         .create_pipeline_layout(&pipeline_layout_info, None)
         .unwrap();
 
@@ -529,8 +575,7 @@ unsafe fn create_pipeline(
         .depth_stencil_state(&depth_stencil_info)
         .dynamic_state(&dynamic_state_info);
 
-    let pipeline = ctx
-        .device
+    let pipeline = device
         .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
         .unwrap()[0];
 

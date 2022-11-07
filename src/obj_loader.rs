@@ -7,7 +7,7 @@ use obj::{Group, Obj, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
 use crate::assets::Asset;
-use crate::assets::{generate_id, AssetId, Assets, MISSING_TEXTURE};
+use crate::assets::{generate_id, AssetId, Assets, FALLBACK_TEXTURE};
 use crate::gfx::geometry::Vertex;
 use crate::gfx::mesh::{BBox, Mesh, Submesh};
 use crate::gfx::texture::Texture;
@@ -102,7 +102,7 @@ impl<'a> ObjLoader<'a> {
     }
 
     fn texture(&mut self, obj: &Obj, group: &Group) -> AssetId {
-        let missing_texture_id = self.assets.id_of(MISSING_TEXTURE).unwrap();
+        let missing_texture_id = self.assets.id_of(FALLBACK_TEXTURE).unwrap();
         if let Some(material) = &group.material {
             if let ObjMaterial::Mtl(material) = material {
                 if let Some(diffuse) = &material.map_kd {

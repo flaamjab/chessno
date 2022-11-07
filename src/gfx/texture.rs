@@ -76,8 +76,8 @@ impl Texture {
             &self.image.as_bytes(),
             self.image.width(),
             self.image.height(),
-            ctx.queues.graphics,
-            ctx.physical_device.queue_families.graphics,
+            ctx.graphics_queue,
+            ctx.physical_device.graphics_queue_family,
         );
         let image_view = create_texture_view(&ctx.device, image);
 

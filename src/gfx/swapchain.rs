@@ -70,8 +70,8 @@ impl Swapchain {
         physical_device: &PhysicalDevice,
         in_flight_fence: vk::Fence,
         image_available_semaphore: vk::Semaphore,
-        framebuffer_resized: &mut bool,
         surface_size: &vk::Extent2D,
+        needs_resize: bool,
     ) -> Option<u32> {
         unsafe {
             device
@@ -85,11 +85,10 @@ impl Swapchain {
                 vk::Fence::null(),
             );
 
-            if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR || *framebuffer_resized {
+            if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR || needs_resize {
                 device
                     .queue_wait_idle(self.present_queue)
                     .expect("failed to wait on queue");
-                *framebuffer_resized = false;
                 trace!("Recreating swapchain");
                 self.recreate(&device, &physical_device, self.surface, &surface_size);
                 return None;
@@ -140,6 +139,10 @@ impl Swapchain {
 
     pub fn handle(&self) -> vk::SwapchainKHR {
         self.handle
+    }
+
+    pub fn queue(&self) -> vk::Queue {
+        self.present_queue
     }
 
     pub unsafe fn framebuffers(

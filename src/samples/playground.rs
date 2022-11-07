@@ -40,13 +40,13 @@ impl PlaygroundScene {
 
         // let chess_cell_id = Mesh::new_plane("chess_cell", shrek_texture_id, &mut assets);
         let mut mesh_loader = ObjLoader::new(assets);
-        let mesh_id = mesh_loader.load_from_file(Path::new(m1887_path), "model");
+        // let mesh_id = mesh_loader.load_from_file(Path::new(m1887_path), "model");
 
         let mut objects = Vec::with_capacity(17);
-        objects.push(Object {
-            mesh_id,
-            transform: Transform::new(Point3::origin(), Vector4::zeros()),
-        });
+        // objects.push(Object {
+        //     mesh_id,
+        //     transform: Transform::new(Point3::origin(), Vector4::zeros()),
+        // });
         // objects.push(Object {
         //     mesh_id: plant_id,
         //     transform: Transform::new(Vector3::zeros(), Vector4::zeros()),

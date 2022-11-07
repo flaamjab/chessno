@@ -2,6 +2,8 @@ use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 
 use crate::gfx::context::Context;
 
+use super::swapchain::Swapchain;
+
 pub unsafe fn begin_once_commands(
     device: &DeviceLoader,
     copy_queue_family: u32,
@@ -152,8 +154,13 @@ pub unsafe fn end_draw(
         .unwrap();
 }
 
-pub unsafe fn present(ctx: &Context, image_index: u32, render_finished_semaphore: vk::Semaphore) {
-    let swapchains = [ctx.swapchain.handle()];
+pub unsafe fn present(
+    device: &DeviceLoader,
+    swapchain: &Swapchain,
+    image_index: u32,
+    render_finished_semaphore: vk::Semaphore,
+) {
+    let swapchains = [swapchain.handle()];
     let image_indices = [image_index];
     let semaphores = [render_finished_semaphore];
     let present_info = vk::PresentInfoKHRBuilder::new()
@@ -161,7 +168,7 @@ pub unsafe fn present(ctx: &Context, image_index: u32, render_finished_semaphore
         .swapchains(&swapchains)
         .image_indices(&image_indices);
 
-    ctx.device
-        .queue_present_khr(ctx.queues.graphics, &present_info)
+    device
+        .queue_present_khr(swapchain.queue(), &present_info)
         .unwrap();
 }

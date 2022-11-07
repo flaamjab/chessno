@@ -6,19 +6,21 @@ use erupt::{vk, InstanceLoader};
 #[derive(Clone)]
 pub struct PhysicalDevice {
     pub handle: vk::PhysicalDevice,
-    pub queue_families: QueueFamilies,
-    pub surface_format: vk::SurfaceFormatKHR,
-    pub present_mode: vk::PresentModeKHR,
+    pub graphics_queue_family: u32,
     pub depth_format: vk::Format,
     pub properties: vk::PhysicalDeviceProperties,
     pub features: vk::PhysicalDeviceFeatures,
-    pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
+    pub surface_format: vk::SurfaceFormatKHR,
+    pub present_mode: vk::PresentModeKHR,
 }
 
 #[derive(Clone)]
-pub struct QueueFamilies {
-    pub graphics: u32,
+pub struct SurfaceProperties {
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    format: vk::SurfaceFormatKHR,
+    present_mode: vk::PresentModeKHR,
 }
 
 impl PhysicalDevice {
@@ -32,7 +34,7 @@ impl PhysicalDevice {
             .unwrap()
             .into_iter()
             .filter_map(|physical_device| {
-                let queue_families = match instance
+                let graphics_queue_family = match instance
                     .get_physical_device_queue_family_properties(physical_device, None)
                     .into_iter()
                     .enumerate()
@@ -48,9 +50,7 @@ impl PhysicalDevice {
                                 )
                                 .unwrap()
                     }) {
-                    Some(queue_family) => QueueFamilies {
-                        graphics: queue_family as u32,
-                    },
+                    Some(queue_family) => queue_family as u32,
                     None => return None,
                 };
 
@@ -110,7 +110,7 @@ impl PhysicalDevice {
 
                 Some(PhysicalDevice {
                     handle: physical_device,
-                    queue_families,
+                    graphics_queue_family,
                     surface_format,
                     depth_format,
                     surface_capabilities,
@@ -127,7 +127,7 @@ impl PhysicalDevice {
                     _ => 0,
                 },
             )
-            .expect("No suitable physical device found")
+            .expect("a Vulkan supported device and OS are required to run")
     }
 }
 
@@ -148,7 +148,7 @@ pub unsafe fn find_depth_format(
     )
 }
 
-pub unsafe fn find_supported_format(
+unsafe fn find_supported_format(
     instance: &InstanceLoader,
     physical_device: vk::PhysicalDevice,
     candidates: &[vk::Format],

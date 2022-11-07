@@ -16,7 +16,7 @@ pub unsafe fn texture_descriptor_sets(
     textures: &[&GpuResidentTexture],
     sampler: vk::Sampler,
 ) -> HashMap<AssetId, vk::DescriptorSet> {
-    debug_assert!(textures.len() <= 8 && !textures.is_empty());
+    debug_assert!(textures.len() <= 8);
 
     let layouts: SmallVec<[vk::DescriptorSetLayout; 16]> = smallvec![layout; textures.len()];
     let alloc_info = vk::DescriptorSetAllocateInfoBuilder::new()

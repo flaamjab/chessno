@@ -8,28 +8,30 @@ use winit::window::Window;
 
 use crate::gfx::physical_device::PhysicalDevice;
 use crate::gfx::swapchain::Swapchain;
-use crate::gfx::validation;
+use crate::gfx::{memory, validation};
 use crate::logging::{debug, info};
+
+use super::sync_pool::SyncPool;
 
 const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
 
 pub struct Context {
-    pub swapchain: Swapchain,
-    pub queues: Queues,
+    pub cmd_pool: vk::CommandPool,
+    pub sync_pool: SyncPool,
+    pub swapchain: Option<Swapchain>,
+    pub graphics_queue: vk::Queue,
     pub device: Arc<DeviceLoader>,
     pub physical_device: PhysicalDevice,
     pub instance: Arc<InstanceLoader>,
     pub entry: Arc<EntryLoader>,
 }
 
-pub struct Queues {
-    pub graphics: vk::Queue,
-}
-
 impl Context {
     pub fn new(window: &Window, app_name: &str, engine_name: &str) -> Self {
         unsafe {
-            let entry = Arc::new(EntryLoader::new().expect("Could locate Vulkan on this device"));
+            let entry = Arc::new(
+                EntryLoader::new().expect("Vulkan libraries must be present on the device"),
+            );
             info!(
                 "Initializing Vulkan instance {}.{}.{}",
                 vk::api_version_major(entry.instance_version()),
@@ -61,11 +63,7 @@ impl Context {
             let device =
                 create_logical_device(&instance, &physical_device, &device_extensions, &layers);
 
-            let graphics_queue =
-                device.get_device_queue(physical_device.queue_families.graphics, 0);
-            let queues = Queues {
-                graphics: graphics_queue,
-            };
+            let graphics_queue = device.get_device_queue(physical_device.graphics_queue_family, 0);
 
             info!(
                 "Using physical device: {:?}",
@@ -77,28 +75,41 @@ impl Context {
             let swapchain = Swapchain::new(
                 &device,
                 &physical_device,
-                queues.graphics,
+                graphics_queue,
                 surface,
                 &draw_area_size,
             );
 
+            let mut sync_pool = SyncPool::new();
+            let cmd_pool =
+                memory::create_command_pool(&device, physical_device.graphics_queue_family);
+
             Self {
-                queues,
+                cmd_pool,
+                graphics_queue,
                 device,
                 physical_device,
                 instance,
                 entry,
-                swapchain,
+                swapchain: Some(swapchain),
+                sync_pool,
             }
         }
     }
+
+    pub fn initialize(&mut self, window: &Window) {}
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
         debug!("Dropping Vulkan context");
         unsafe {
-            self.swapchain.destroy(&self.device, &self.instance);
+            if let Some(swapchain) = &mut self.swapchain {
+                swapchain.destroy(&self.device, &self.instance);
+            }
+
+            self.sync_pool.destroy_all(&self.device);
+            self.device.destroy_command_pool(self.cmd_pool, None);
 
             self.device.destroy_device(None);
 
@@ -140,7 +151,7 @@ unsafe fn create_logical_device(
     device_layers: &[*const c_char],
 ) -> Arc<DeviceLoader> {
     let queue_infos = vec![vk::DeviceQueueCreateInfoBuilder::new()
-        .queue_family_index(physical_device.queue_families.graphics)
+        .queue_family_index(physical_device.graphics_queue_family)
         .queue_priorities(&[1.0])];
 
     let features = vk::PhysicalDeviceFeaturesBuilder::new().sampler_anisotropy(true);
