@@ -1,26 +1,23 @@
 use std::path::Path;
 
-use nalgebra::Vector3;
 use nalgebra::{Point3, Vector4};
 use winit::window::Window;
 
-use crate::assets::Asset;
-use crate::assets::Assets;
-use crate::camera::Camera;
-use crate::free_camera_control::FreeCameraControl;
-use crate::gfx::mesh::Mesh;
-use crate::gfx::texture::Texture;
-use crate::input_state::InputState;
-use crate::obj_loader::ObjLoader;
-use crate::object::Object;
-use crate::projection::Projection;
-use crate::scene::DynamicScene;
-use crate::scene::Scene;
-use crate::transform::Transform;
+use crate::{
+    assets::{Asset, Assets},
+    camera::{Camera, CameraControl, FreeCameraMouseControl, FreeCameraTouchControl},
+    gfx::{mesh::Mesh, texture::Texture},
+    input_state::InputState,
+    obj_loader::ObjLoader,
+    object::Object,
+    projection::Projection,
+    scene::{DynamicScene, Scene},
+    transform::Transform,
+};
 
 pub struct PlaygroundScene {
     objects: Vec<Object>,
-    camera_control: FreeCameraControl,
+    camera_control: FreeCameraTouchControl,
 }
 
 impl PlaygroundScene {
@@ -76,12 +73,20 @@ impl PlaygroundScene {
         }
     }
 
-    fn setup_camera() -> FreeCameraControl {
+    // fn setup_camera() -> FreeCameraMouseControl {
+    //     let camera_pos = Point3::new(0.0, -1.0, -2.0);
+    //     let camera_dir = -camera_pos.coords;
+    //     let projection = Projection::perspective(45.0, 0.1, 100.0);
+    //     let camera = Camera::new(&camera_pos, &camera_dir, projection);
+    //     FreeCameraMouseControl::new(camera, 3.5, 30.0)
+    // }
+
+    fn setup_camera() -> FreeCameraTouchControl {
         let camera_pos = Point3::new(0.0, -1.0, -2.0);
         let camera_dir = -camera_pos.coords;
         let projection = Projection::perspective(45.0, 0.1, 100.0);
         let camera = Camera::new(&camera_pos, &camera_dir, projection);
-        FreeCameraControl::new(camera, 3.5, 30.0)
+        FreeCameraTouchControl::new(camera, 3.5, 120.0, 0.3)
     }
 }
 

@@ -1,4 +1,5 @@
 use asset_locator::AssetLocator;
+use math::Point2D;
 use winit::{
     event::{DeviceEvent, ElementState, Event, TouchPhase, WindowEvent},
     event_loop::EventLoop,
@@ -17,7 +18,6 @@ mod asset_locator;
 mod assets;
 mod camera;
 mod frame_counter;
-mod free_camera_control;
 mod gfx;
 mod input_state;
 mod logging;
@@ -77,7 +77,7 @@ pub fn main() {
         }
         Event::DeviceEvent { event, .. } => match event {
             DeviceEvent::MouseMotion { delta } => {
-                input_state.set_mouse_offset((delta.0 as f32, delta.1 as f32));
+                input_state.set_mouse_offset(Point2D::new(delta.0, delta.1));
             }
             _ => {}
         },
@@ -91,14 +91,16 @@ pub fn main() {
             }
             WindowEvent::Touch(e) => match e.phase {
                 TouchPhase::Started => {
-                    debug!("{:?}", e);
-                    input_state.set_touch_start_position((e.location.x, e.location.y));
+                    input_state
+                        .set_touch_start_position(e.id, Point2D::new(e.location.x, e.location.y));
                 }
                 TouchPhase::Moved => {
-                    input_state.set_touch_move_position((e.location.x, e.location.y));
+                    input_state
+                        .set_touch_move_position(e.id, Point2D::new(e.location.x, e.location.y));
                 }
                 TouchPhase::Ended => {
-                    debug!("{:?}", e);
+                    input_state
+                        .set_touch_end_position(e.id, Point2D::new(e.location.x, e.location.y));
                 }
                 TouchPhase::Cancelled => {
                     warn!("{e:?}");
