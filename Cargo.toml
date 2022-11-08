@@ -35,3 +35,12 @@ label = "Chessno"
 
 [package.metadata.android.sdk]
 min_sdk_version = 23
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.vulkan.level"
+required = true
+version = 1
+
+[package.metadata.android.signing.release]
+path = ".android/debug.keystore"
+keystore_password = "android"
