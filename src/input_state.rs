@@ -8,15 +8,16 @@ pub enum Key {
     KeyboardKey(VirtualKeyCode),
 }
 
-pub type MouseOffset = (f32, f32);
-pub type MousePosition = (f64, f64);
+pub type Offset = (f32, f32);
+pub type Position = (f64, f64);
 
 pub struct InputState {
     pressed_keys: HashSet<Key>,
     held_keys: HashSet<Key>,
     released_keys: HashSet<Key>,
-    mouse_offset: MouseOffset,
-    mouse_position: MousePosition,
+    mouse_offset: Offset,
+    touch_start_position: Position,
+    touch_move_position: Position,
 }
 
 impl InputState {
@@ -25,8 +26,9 @@ impl InputState {
             pressed_keys: HashSet::new(),
             held_keys: HashSet::new(),
             released_keys: HashSet::new(),
-            mouse_offset: (0.0, 0.0),
-            mouse_position: (0.0, 0.0),
+            mouse_offset: Default::default(),
+            touch_start_position: Default::default(),
+            touch_move_position: Default::default(),
         }
     }
 
@@ -42,12 +44,16 @@ impl InputState {
         self.released_keys.contains(&key)
     }
 
-    pub fn mouse_offset(&self) -> MouseOffset {
+    pub fn mouse_offset(&self) -> Offset {
         self.mouse_offset
     }
 
-    pub fn mouse_position(&self) -> MousePosition {
-        self.mouse_position
+    pub fn touch_start_position(&self) -> Position {
+        self.touch_start_position
+    }
+
+    pub fn touch_position(&self) -> Position {
+        self.touch_move_position
     }
 
     pub fn end_frame(&mut self) {
@@ -56,12 +62,16 @@ impl InputState {
         self.mouse_offset = (0.0, 0.0);
     }
 
-    pub fn set_mouse_offset(&mut self, offset: MouseOffset) {
+    pub fn set_mouse_offset(&mut self, offset: Offset) {
         self.mouse_offset = offset;
     }
 
-    pub fn set_mouse_position(&mut self, position: MousePosition) {
-        self.mouse_position = position;
+    pub fn set_touch_start_position(&mut self, position: Position) {
+        self.touch_start_position = position;
+    }
+
+    pub fn set_touch_move_position(&mut self, position: Position) {
+        self.touch_move_position = position;
     }
 
     pub fn set_pressed(&mut self, key: Key) {

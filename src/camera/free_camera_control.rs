@@ -2,6 +2,7 @@ use nalgebra::{Point3, Rotation3, Unit, Vector3};
 use winit::dpi::PhysicalPosition;
 use winit::window::{CursorGrabMode, Window};
 
+use crate::camera::camera_control::CameraControl;
 use crate::input_state::{Key, MouseButton, VirtualKeyCode};
 use crate::logging::{debug, warn};
 use crate::{camera::Camera, input_state::InputState};
@@ -36,15 +37,50 @@ impl FreeCameraControl {
         }
     }
 
-    pub fn camera(&self) -> &Camera {
+    fn grab_cursor(&mut self, window: &Window) {
+        debug!("Grab cursor called");
+        if !self.cursor_grabbed {
+            self.cursor_grabbed = true;
+            window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .unwrap_or_else(|e| warn!("failed to set cursor grab mode to locked: {:?}", e));
+
+            let center = self.window_center(window);
+            window
+                .set_cursor_position(center)
+                .unwrap_or_else(|e| warn!("failed to set cursor position: {:?}", e));
+
+            window.set_cursor_visible(false);
+        }
+    }
+
+    fn release_cursor(&mut self, window: &Window) {
+        if self.cursor_grabbed {
+            window.set_cursor_grab(CursorGrabMode::None).expect(
+                "you happen to be on a platform that does not support
+            cursor grab modes",
+            );
+            self.cursor_grabbed = false;
+            window.set_cursor_visible(true);
+        }
+    }
+
+    fn window_center(&self, window: &Window) -> PhysicalPosition<u32> {
+        let size = window.inner_size();
+        PhysicalPosition::new(size.width / 2, size.height / 2)
+    }
+}
+
+impl CameraControl for FreeCameraControl {
+    fn camera(&self) -> &Camera {
         &self.camera
     }
 
-    pub fn camera_mut(&mut self) -> &mut Camera {
+    fn camera_mut(&mut self) -> &mut Camera {
         &mut self.camera
     }
 
-    pub fn update(&mut self, window: &Window, input_state: &InputState, time_delta: f32) {
+    fn update(&mut self, window: &Window, input_state: &InputState, time_delta: f32) {
         let mut camera_velocity = Vector3::zeros();
         let mut rot_left_right = Rotation3::identity();
         let mut rot_up_down = Rotation3::identity();
@@ -113,38 +149,5 @@ impl FreeCameraControl {
 
         self.camera.position = self.camera_pos;
         self.camera.direction = *self.camera_dir.as_ref();
-    }
-
-    fn grab_cursor(&mut self, window: &Window) {
-        debug!("Grab cursor called");
-        if !self.cursor_grabbed {
-            self.cursor_grabbed = true;
-            window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .unwrap_or_else(|e| warn!("failed to set cursor grab mode to locked: {:?}", e));
-
-            let center = self.window_center(window);
-            window
-                .set_cursor_position(center)
-                .unwrap_or_else(|e| warn!("failed to set cursor position: {:?}", e));
-
-            window.set_cursor_visible(false);
-        }
-    }
-
-    fn release_cursor(&mut self, window: &Window) {
-        if self.cursor_grabbed {
-            window.set_cursor_grab(CursorGrabMode::None).expect(
-                "you happen to be on a platform that does not support
-            cursor grab modes",
-            );
-            self.cursor_grabbed = false;
-            window.set_cursor_visible(true);
-        }
-    }
-
-    fn window_center(&self, window: &Window) -> PhysicalPosition<u32> {
-        let size = window.inner_size();
-        PhysicalPosition::new(size.width / 2, size.height / 2)
     }
 }

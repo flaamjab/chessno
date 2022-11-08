@@ -26,3 +26,12 @@ ndk-glue = {  version = "0.7.0", features = ["logger"] }
 ndk-context = "0.1.1"
 ndk = "0.7.0"
 jni = "0.20.0"
+
+[package.metadata.android]
+assets = "assets"
+
+[package.metadata.android.application]
+label = "Chessno"
+
+[package.metadata.android.sdk]
+min_sdk_version = 23

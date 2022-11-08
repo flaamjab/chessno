@@ -1,13 +1,13 @@
 use asset_locator::AssetLocator;
 use winit::{
-    event::{DeviceEvent, ElementState, Event, WindowEvent},
+    event::{DeviceEvent, ElementState, Event, TouchPhase, WindowEvent},
     event_loop::EventLoop,
-    window::{Window, WindowBuilder},
+    window::WindowBuilder,
 };
 
 use crate::assets::Assets;
 use crate::input_state::InputState;
-use crate::logging::debug;
+use crate::logging::{debug, warn};
 use crate::samples::PlaygroundScene;
 use crate::scene::DynamicScene;
 use crate::timer::Timer;
@@ -89,9 +89,21 @@ pub fn main() {
             WindowEvent::Resized(new_size) => {
                 renderer.handle_resize(new_size);
             }
-            WindowEvent::Touch(e) => {
-                debug!("{:?}", e);
-            }
+            WindowEvent::Touch(e) => match e.phase {
+                TouchPhase::Started => {
+                    debug!("{:?}", e);
+                    input_state.set_touch_start_position((e.location.x, e.location.y));
+                }
+                TouchPhase::Moved => {
+                    input_state.set_touch_move_position((e.location.x, e.location.y));
+                }
+                TouchPhase::Ended => {
+                    debug!("{:?}", e);
+                }
+                TouchPhase::Cancelled => {
+                    warn!("{e:?}");
+                }
+            },
             WindowEvent::MouseInput { state, button, .. } => match state {
                 ElementState::Pressed => input_state.set_pressed(Key::MouseButton(button)),
                 ElementState::Released => input_state.set_released(Key::MouseButton(button)),
