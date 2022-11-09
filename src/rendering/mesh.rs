@@ -1,37 +1,39 @@
 use std::collections::HashSet;
 
-use crate::assets::{generate_id, Asset, AssetId, Assets};
-use crate::gfx::geometry::Vertex;
-use crate::gfx::memory::{IndexBuffer, VertexBuffer};
+use crate::assets::{Asset, MeshId, TextureId};
+use crate::rendering::memory::{IndexBuffer, VertexBuffer};
+use crate::rendering::vertex::Vertex;
 
 use super::resource::DeviceResource;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
-    pub id: AssetId,
+    pub id: MeshId,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
-    pub textures: HashSet<AssetId>,
+    pub textures: HashSet<TextureId>,
     pub submeshes: Vec<Submesh>,
     pub bbox: BBox,
 }
 
 #[derive(Clone, Debug)]
 pub struct Submesh {
-    pub id: AssetId,
-    pub texture_id: AssetId,
+    pub id: MeshId,
+    pub texture_id: TextureId,
     pub start_index: usize,
     pub end_index: usize,
 }
 
+/// Submesh loaded to the GPU (current implementation uses one index and vertex buffer per submesh).
 #[derive(Debug)]
-pub struct GpuResidentMesh {
-    pub texture_id: AssetId,
+pub struct LoadedSubmesh {
+    pub id: MeshId,
+    pub texture_id: TextureId,
     pub vertex_buf: VertexBuffer,
     pub index_buf: IndexBuffer,
 }
 
-impl DeviceResource for GpuResidentMesh {
+impl DeviceResource for LoadedSubmesh {
     fn destroy(&self, device: &erupt::DeviceLoader) {
         self.vertex_buf.destroy(device);
         self.index_buf.destroy(device);
@@ -46,13 +48,13 @@ pub struct BBox {
 }
 
 impl Asset for Mesh {
-    fn id(&self) -> AssetId {
+    fn id(&self) -> MeshId {
         self.id
     }
 }
 
 impl Mesh {
-    pub fn new_plane(name: &str, texture_id: AssetId, assets: &mut Assets) -> AssetId {
+    pub fn new_plane(texture_id: TextureId) -> Mesh {
         let vertices = [
             Vertex {
                 pos: [-0.5, -0.5, 0.0],
@@ -86,22 +88,18 @@ impl Mesh {
         };
 
         let n_indices = indices.len();
-        let mesh_id = generate_id();
-        let mesh = Mesh {
-            id: mesh_id,
+        Mesh {
+            id: 0,
             vertices,
             indices,
             bbox: bbox.clone(),
             textures: HashSet::new(),
             submeshes: vec![Submesh {
-                id: generate_id(),
+                id: 0,
                 start_index: 0,
                 end_index: n_indices,
                 texture_id,
             }],
-        };
-        assets.insert_mesh(name, mesh);
-
-        mesh_id
+        }
     }
 }

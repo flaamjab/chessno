@@ -57,9 +57,3 @@ impl SyncPool {
         self.semaphores.clear();
     }
 }
-
-impl Drop for SyncPool {
-    fn drop(&mut self) {
-        debug!("A sync pool would be dropped now");
-    }
-}

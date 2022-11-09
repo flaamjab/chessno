@@ -1,8 +1,5 @@
 use std::ffi::c_void;
 use std::io;
-use std::io::BufRead;
-use std::io::Read;
-use std::io::Seek;
 use std::path::Path;
 
 use erupt::{vk, DeviceLoader};
@@ -10,48 +7,42 @@ use image::io::Reader as ImageReader;
 use image::EncodableLayout;
 use image::RgbaImage;
 
-use crate::asset_locator::AssetLocator;
-use crate::assets::generate_id;
-use crate::assets::{Asset, AssetId};
-use crate::gfx::context::Context;
-use crate::gfx::g;
-use crate::gfx::memory;
+use crate::assets::AssetLocator;
+use crate::{
+    assets::{Asset, TextureId},
+    rendering::{context::Context, g, memory},
+};
 
 use super::physical_device::PhysicalDevice;
 use super::resource::DeviceResource;
 
-enum TextureState {
-    Unloaded,
-    CPUOnly,
-    GPUOnly,
-}
-
 #[derive(Clone, Debug)]
 pub struct Texture {
-    id: AssetId,
-    image: RgbaImage,
+    pub id: TextureId,
+    pub image: RgbaImage,
 }
 
 impl Asset for Texture {
-    fn id(&self) -> AssetId {
+    fn id(&self) -> TextureId {
         self.id
     }
 }
 
-pub struct GpuResidentTexture {
-    id: AssetId,
+/// Texture loaded to the GPU.
+pub struct LoadedTexture {
+    pub id: TextureId,
     pub memory: vk::DeviceMemory,
     pub image: vk::Image,
     pub image_view: vk::ImageView,
 }
 
-impl GpuResidentTexture {
-    pub fn id(&self) -> AssetId {
+impl LoadedTexture {
+    pub fn id(&self) -> TextureId {
         self.id
     }
 }
 
-impl DeviceResource for GpuResidentTexture {
+impl DeviceResource for LoadedTexture {
     fn destroy(&self, device: &DeviceLoader) {
         unsafe {
             device.destroy_image_view(self.image_view, None);
@@ -62,19 +53,19 @@ impl DeviceResource for GpuResidentTexture {
 }
 
 impl Texture {
-    pub fn from_reader<R: BufRead + Seek>(reader: &mut R) -> io::Result<Self> {
+    pub fn from_asset(locator: &AssetLocator, path: &Path) -> io::Result<Self> {
+        let reader = locator.open(path)?;
         let image = ImageReader::new(reader)
             .with_guessed_format()?
             .decode()
             .expect("failed to decode image at {:path}");
-        let id = generate_id();
         Ok(Self {
-            id,
+            id: 0,
             image: image.to_rgba8(),
         })
     }
 
-    pub unsafe fn load(&self, ctx: &Context) -> GpuResidentTexture {
+    pub unsafe fn init(&self, ctx: &Context) -> LoadedTexture {
         let (image, memory) = upload_to_gpu(
             &ctx.device,
             &ctx.physical_device,
@@ -86,7 +77,7 @@ impl Texture {
         );
         let image_view = create_texture_view(&ctx.device, image);
 
-        GpuResidentTexture {
+        LoadedTexture {
             id: self.id,
             image,
             image_view,

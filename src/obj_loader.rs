@@ -2,21 +2,24 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use log::{trace, warn};
-use obj::{Group, Material, Mtl, Obj, ObjData, ObjMaterial, SimplePolygon};
+use log::{debug, trace, warn};
+use obj::{Group, Obj, ObjData, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
-use crate::assets::Asset;
-use crate::assets::{generate_id, AssetId, Assets, FALLBACK_TEXTURE};
-use crate::gfx::geometry::Vertex;
-use crate::gfx::mesh::{BBox, Mesh, Submesh};
-use crate::gfx::texture::Texture;
-use crate::path_wrangler::PathWrangler;
+use crate::{
+    assets::{Asset, Assets, MeshId, TextureId, FALLBACK_TEXTURE},
+    path_wrangler::PathWrangler,
+    rendering::{
+        mesh::{BBox, Mesh, Submesh},
+        texture::Texture,
+        vertex::Vertex,
+    },
+};
 
 pub struct ObjLoader<'a> {
     vertices: Vec<Vertex>,
     indices: Vec<u16>,
-    textures: HashSet<AssetId>,
+    textures: HashSet<TextureId>,
     assets: &'a mut Assets,
 }
 
@@ -32,7 +35,7 @@ impl<'a> ObjLoader<'a> {
         }
     }
 
-    pub fn load(&mut self, path: &Path, name: &str) -> AssetId {
+    pub fn load(&mut self, path: &Path, name: &str) -> MeshId {
         let locator = self.assets.asset_locator();
         let reader = locator.open(path).expect("make sure requested file exists");
         let obj_data = ObjData::load_buf(reader).expect("make sure the file format is correct OBJ");
@@ -47,19 +50,17 @@ impl<'a> ObjLoader<'a> {
 
         obj.load_mtls_fn(|path, mat_name| {
             let mtl_path = path.join(mat_name);
-            eprintln!("Material path: {mtl_path:?}");
             locator.open(&mtl_path)
         })
         .expect("make sure material files exist");
 
         let submeshes = self.assemble(&obj);
 
-        let mesh_id = generate_id();
         let vertices = std::mem::replace(&mut self.vertices, Vec::new());
         let indices = std::mem::replace(&mut self.indices, Vec::new());
         let textures = std::mem::replace(&mut self.textures, HashSet::new());
         let mesh = Mesh {
-            id: mesh_id,
+            id: 0,
             vertices,
             indices,
             textures,
@@ -67,9 +68,7 @@ impl<'a> ObjLoader<'a> {
             bbox: BBox::default(),
         };
 
-        self.assets.insert_mesh(name, mesh);
-
-        mesh_id
+        self.assets.insert_mesh(name, mesh)
     }
 
     fn assemble(&mut self, obj: &Obj) -> Vec<Submesh> {
@@ -100,7 +99,7 @@ impl<'a> ObjLoader<'a> {
                 self.textures.insert(texture_id);
 
                 submeshes.push(Submesh {
-                    id: generate_id(),
+                    id: 0,
                     texture_id,
                     start_index: submesh_start,
                     end_index: submesh_end,
@@ -111,7 +110,7 @@ impl<'a> ObjLoader<'a> {
         submeshes
     }
 
-    fn texture(&mut self, obj: &Obj, group: &Group) -> AssetId {
+    fn texture(&mut self, obj: &Obj, group: &Group) -> TextureId {
         let fallback_texture_id = self.assets.id_of(FALLBACK_TEXTURE).unwrap();
         if let Some(material) = &group.material {
             if let ObjMaterial::Mtl(material) = material {
@@ -121,16 +120,10 @@ impl<'a> ObjLoader<'a> {
                     if let Some(texture_id) = self.assets.id_of(&name) {
                         return texture_id;
                     } else {
-                        let asset_locator = self.assets.asset_locator();
-                        return asset_locator
-                            .open(&path)
-                            .and_then(|mut tr| Texture::from_reader(&mut tr))
+                        let locator = self.assets.asset_locator();
+                        return Texture::from_asset(locator, &path)
                             .map_err(|e| warn!("Failed to load texture {path:?}: {e}"))
-                            .map(|t| {
-                                let id = t.id();
-                                self.assets.insert_texture(&name, t);
-                                id
-                            })
+                            .map(|t| self.assets.insert_texture(&name, t))
                             .unwrap_or(fallback_texture_id);
                     }
                 }
@@ -200,13 +193,11 @@ impl<'a> ObjLoader<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::asset_locator::AssetLocator;
 
     #[test]
     fn test_model_loads_successfully() {
         let path = Path::new("models/indoor_plant/indoor plant_02.obj");
-        let asset_locator = AssetLocator::new();
-        let mut assets = Assets::new(asset_locator);
+        let mut assets = Assets::new();
         let mut loader = ObjLoader::new(&mut assets);
         let _mesh = loader.load(path, "plant");
     }

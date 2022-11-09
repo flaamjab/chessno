@@ -4,18 +4,16 @@ use std::mem::size_of;
 use erupt::{vk, DeviceLoader};
 use smallvec::{smallvec, SmallVec};
 
-use crate::assets::AssetId;
-use crate::gfx::texture::GpuResidentTexture;
-use crate::transform::Transform;
+use crate::{assets::TextureId, rendering::texture::LoadedTexture, transform::Transform};
 
 pub unsafe fn texture_descriptor_sets(
     device: &DeviceLoader,
     pool: vk::DescriptorPool,
     layout: vk::DescriptorSetLayout,
     binding: u32,
-    textures: &[&GpuResidentTexture],
+    textures: &[&LoadedTexture],
     sampler: vk::Sampler,
-) -> HashMap<AssetId, vk::DescriptorSet> {
+) -> HashMap<TextureId, vk::DescriptorSet> {
     debug_assert!(textures.len() <= 8);
 
     let layouts: SmallVec<[vk::DescriptorSetLayout; 16]> = smallvec![layout; textures.len()];

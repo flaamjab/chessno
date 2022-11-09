@@ -85,7 +85,7 @@ impl FreeCameraMouseControl {
             );
             rot_up_down = Rotation3::from_axis_angle(
                 &self.camera_right,
-                -(mouse_offset.x as f32 * modifier).to_radians(),
+                -(mouse_offset.y as f32 * modifier).to_radians(),
             );
         }
 
@@ -116,7 +116,6 @@ impl FreeCameraMouseControl {
     }
 
     fn grab_cursor(&mut self, window: &Window) {
-        debug!("Grab cursor called");
         if !self.cursor_grabbed {
             self.cursor_grabbed = true;
             window
@@ -136,7 +135,7 @@ impl FreeCameraMouseControl {
         if self.cursor_grabbed {
             window.set_cursor_grab(CursorGrabMode::None).expect(
                 "you happen to be on a platform that does not support
-            cursor grab modes",
+                cursor grab modes",
             );
             self.cursor_grabbed = false;
             window.set_cursor_visible(true);

@@ -6,10 +6,10 @@ use erupt::{cstr, utils::surface, vk, DeviceLoader, EntryLoader, InstanceLoader}
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::gfx::physical_device::PhysicalDevice;
-use crate::gfx::swapchain::Swapchain;
-use crate::gfx::{memory, validation};
 use crate::logging::{debug, info};
+use crate::rendering::physical_device::PhysicalDevice;
+use crate::rendering::swapchain::Swapchain;
+use crate::rendering::{memory, validation};
 
 use super::sync_pool::SyncPool;
 

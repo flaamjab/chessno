@@ -1,10 +1,10 @@
 mod context;
 mod descriptor;
 mod g;
-pub mod geometry;
 mod memory;
 pub mod mesh;
 mod physical_device;
+pub mod projection;
 pub mod renderer;
 mod resource;
 mod shader;
@@ -13,3 +13,4 @@ mod swapchain;
 mod sync_pool;
 pub mod texture;
 mod validation;
+pub mod vertex;

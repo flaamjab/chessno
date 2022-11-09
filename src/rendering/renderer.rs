@@ -2,24 +2,28 @@ use std::collections::hash_map::Entry;
 use std::mem::size_of;
 use std::{collections::HashMap, ffi::c_void};
 
+use erupt::utils::surface;
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::assets::{Asset, AssetId, Assets};
-use crate::gfx::{
-    context::Context,
-    descriptor as ds, g,
-    geometry::Vertex,
-    memory::{self, IndexBuffer, VertexBuffer},
-    mesh::{GpuResidentMesh, Mesh},
-    resource::DeviceResource,
-    shader::{Shader, ShaderStage},
-    spatial::Spatial,
-    texture::{self, GpuResidentTexture, Texture},
+use crate::{
+    assets::{Asset, Assets, MeshId, TextureId},
+    logging::{debug, trace},
+    rendering::{
+        context::Context,
+        descriptor as ds, g,
+        memory::{self, IndexBuffer, VertexBuffer},
+        mesh::{LoadedSubmesh, Mesh},
+        resource::DeviceResource,
+        shader::{Shader, ShaderStage},
+        spatial::Spatial,
+        texture::{self, LoadedTexture, Texture},
+        vertex::Vertex,
+    },
+    scenes::Scene,
 };
-use crate::scene::Scene;
 
 const SHADER_VERT: &[u8] = include_bytes!("../../shaders/unlit.vert.spv");
 const SHADER_FRAG: &[u8] = include_bytes!("../../shaders/unlit.frag.spv");
@@ -33,13 +37,12 @@ pub struct Renderer {
     frame_number: usize,
     has_window_target: bool,
 
-    textures: HashMap<AssetId, GpuResidentTexture>,
-    texture_descriptor_sets: HashMap<AssetId, vk::DescriptorSet>,
+    textures: HashMap<TextureId, LoadedTexture>,
+    texture_descriptor_sets: HashMap<TextureId, vk::DescriptorSet>,
     sampler: vk::Sampler,
 
-    meshes: HashMap<AssetId, GpuResidentMesh>,
+    meshes: HashMap<MeshId, LoadedSubmesh>,
 
-    swapchain_needs_resize: bool,
     surface_size: vk::Extent2D,
 
     descriptor_pool: vk::DescriptorPool,
@@ -73,7 +76,6 @@ impl Renderer {
             render_pass: vk::RenderPass::null(),
             sampler: vk::Sampler::null(),
             textures: HashMap::new(),
-            swapchain_needs_resize: false,
             surface_size: vk::Extent2D::default(),
             has_window_target: false,
             app_name: app_name.to_string(),
@@ -133,17 +135,22 @@ impl Renderer {
         }
     }
 
-    pub fn use_textures(&mut self, textures: &[&Texture]) {
+    pub fn load_assets(&mut self, assets: &Assets) {
+        self.use_textures(assets.textures());
+        self.use_meshes(assets.meshes());
+    }
+
+    fn use_textures<'a>(&mut self, textures: impl Iterator<Item = &'a Texture>) {
         if let Some(ctx) = &self.ctx {
             unsafe {
                 for t in textures {
                     if !self.textures.contains_key(&t.id()) {
-                        self.textures.insert(t.id(), t.load(ctx));
+                        let gpu_texture = t.init(ctx);
+                        self.textures.insert(t.id(), gpu_texture);
                     }
                 }
 
-                let textures: SmallVec<[&GpuResidentTexture; 16]> =
-                    self.textures.values().collect();
+                let textures: SmallVec<[&LoadedTexture; 16]> = self.textures.values().collect();
                 self.texture_descriptor_sets = ds::texture_descriptor_sets(
                     &ctx.device,
                     self.descriptor_pool,
@@ -156,7 +163,7 @@ impl Renderer {
         }
     }
 
-    pub fn use_meshes(&mut self, meshes: &[&Mesh]) {
+    fn use_meshes<'a>(&mut self, meshes: impl Iterator<Item = &'a Mesh>) {
         if let Some(ctx) = &self.ctx {
             let copy_queue = ctx.graphics_queue;
             let copy_queue_family = ctx.physical_device.graphics_queue_family;
@@ -188,7 +195,8 @@ impl Renderer {
                             index_count: indices.len(),
                         };
 
-                        let gpu_mesh = GpuResidentMesh {
+                        let gpu_mesh = LoadedSubmesh {
+                            id: submesh.id,
                             texture_id: submesh.texture_id,
                             index_buf,
                             vertex_buf,
@@ -233,10 +241,9 @@ impl Renderer {
 
                 let objects = scene.objects();
                 let camera = scene.active_camera();
-                let mut free_queue = Vec::with_capacity(objects.len());
                 for o in objects {
                     let mesh = assets
-                        .get_mesh_by_id(o.mesh_id)
+                        .mesh(o.mesh_id)
                         .expect("failed to fetch mesh that is supposed to be loaded");
                     unsafe {
                         for sm in &mesh.submeshes {
@@ -297,7 +304,6 @@ impl Renderer {
                 }
 
                 unsafe {
-                    // End draw
                     g::end_draw(
                         &ctx.device,
                         ctx.graphics_queue,
@@ -307,22 +313,12 @@ impl Renderer {
                         current_frame.in_flight_fence,
                     );
 
-                    // Present
                     g::present(
                         &ctx.device,
                         &swapchain,
                         image,
                         current_frame.render_finished_semaphore,
                     );
-
-                    // Free buffers and memory
-                    ctx.device
-                        .queue_wait_idle(ctx.graphics_queue)
-                        .expect("failed to wait for queue");
-                    for (buf, mem) in free_queue.drain(..) {
-                        ctx.device.destroy_buffer(buf, None);
-                        ctx.device.free_memory(mem, None);
-                    }
                 }
             }
 
@@ -330,11 +326,23 @@ impl Renderer {
         }
     }
 
-    pub fn handle_resize(&mut self, new_size: PhysicalSize<u32>) {
-        self.swapchain_needs_resize = true;
-
-        let PhysicalSize { width, height } = new_size;
-        self.surface_size = vk::Extent2D { width, height };
+    pub fn invalidate_surface(&mut self, window: &Window) {
+        unsafe {
+            if let Some(ctx) = &mut self.ctx {
+                if let Some(swapchain) = &mut ctx.swapchain {
+                    let PhysicalSize { width, height } = window.inner_size();
+                    let surface = surface::create_surface(&ctx.instance, &window, None)
+                        .expect("failed to create Vulkan surface");
+                    swapchain.queue_recreate(
+                        surface,
+                        &vk::Extent2D {
+                            width: width as u32,
+                            height: height as u32,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     fn render_target(&mut self) -> Option<u32> {
@@ -347,11 +355,8 @@ impl Renderer {
                     &ctx.physical_device,
                     current_frame.in_flight_fence,
                     current_frame.image_available_semaphore,
-                    &self.surface_size,
-                    self.swapchain_needs_resize,
                 ) {
                     None => {
-                        self.swapchain_needs_resize = false;
                         return None;
                     }
                     image => return image,
@@ -375,6 +380,8 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             if let Some(ctx) = &self.ctx {
+                debug!("Dropping renderer");
+
                 ctx.device.device_wait_idle().unwrap();
 
                 for m in self.meshes.values() {

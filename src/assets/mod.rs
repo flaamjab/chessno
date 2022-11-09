@@ -1,15 +1,18 @@
+mod asset_locator;
+
+pub use asset_locator::AssetLocator;
+
 use std::{collections::HashMap, path::Path};
 
 use uuid::Uuid;
 
-use crate::{
-    asset_locator::AssetLocator,
-    gfx::{mesh::Mesh, texture::Texture},
-};
+use crate::rendering::{mesh::Mesh, texture::Texture};
 
-pub type AssetId = u128;
+type AssetId = u128;
+pub type MeshId = AssetId;
+pub type TextureId = AssetId;
 
-pub fn generate_id() -> AssetId {
+fn generate_id() -> AssetId {
     Uuid::new_v4().as_u128()
 }
 
@@ -27,11 +30,11 @@ pub struct Assets {
 }
 
 impl Assets {
-    pub fn new(asset_locator: AssetLocator) -> Self {
-        let fallback_texture_path = Path::new("textures/missing.png");
-        let mut texture_reader = asset_locator.open(&fallback_texture_path).unwrap();
-        let fallback_texture =
-            Texture::from_reader(&mut texture_reader).expect("failed to load missing texture");
+    pub fn new() -> Self {
+        let asset_locator = AssetLocator::new();
+        let fallback_texture_path = Path::new("textures/fallback.png");
+        let fallback_texture = Texture::from_asset(&asset_locator, fallback_texture_path)
+            .expect("make sure fallback texture is present in the assets folder");
 
         let name_map = HashMap::from_iter([(FALLBACK_TEXTURE.to_string(), fallback_texture.id())]);
         let textures = HashMap::from_iter([(fallback_texture.id(), fallback_texture)]);
@@ -48,30 +51,38 @@ impl Assets {
         &self.asset_locator
     }
 
-    pub fn insert_texture(&mut self, name: &str, texture: Texture) {
+    pub fn insert_texture(&mut self, name: &str, mut texture: Texture) -> TextureId {
         self.record_name(name, &texture);
-        self.textures.insert(texture.id(), texture);
+        let texture_id = generate_id();
+        texture.id = texture_id;
+        self.textures.insert(texture_id, texture);
+
+        texture_id
     }
 
-    pub fn insert_mesh(&mut self, name: &str, mesh: Mesh) {
+    pub fn insert_mesh(&mut self, name: &str, mut mesh: Mesh) -> MeshId {
+        for submesh in &mut mesh.submeshes {
+            submesh.id = generate_id();
+        }
+
         self.record_name(name, &mesh);
-        self.meshes.insert(mesh.id(), mesh);
+        let mesh_id = generate_id();
+        mesh.id = mesh_id;
+        self.meshes.insert(mesh_id, mesh);
+
+        mesh_id
     }
 
-    pub fn get_texture_by_id(&self, id: AssetId) -> Option<&Texture> {
+    pub fn texture(&self, id: AssetId) -> Option<&Texture> {
         self.textures.get(&id)
     }
 
-    pub fn get_mesh_by_id(&self, id: AssetId) -> Option<&Mesh> {
+    pub fn mesh(&self, id: AssetId) -> Option<&Mesh> {
         self.meshes.get(&id)
     }
 
     pub fn id_of(&self, name: &str) -> Option<AssetId> {
         self.name_map.get(name).map(|id| *id)
-    }
-
-    pub fn is_present(&self, name: &str) -> bool {
-        self.name_map.contains_key(name)
     }
 
     pub fn textures(&self) -> impl Iterator<Item = &Texture> {

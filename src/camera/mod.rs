@@ -8,7 +8,7 @@ pub use camera_control::CameraControl;
 pub use free_camera_mouse_control::FreeCameraMouseControl;
 pub use free_camera_touch_control::FreeCameraTouchControl;
 
-use crate::projection::Projection;
+use crate::rendering::projection::Projection;
 
 pub struct Camera {
     pub position: Point3<f32>,

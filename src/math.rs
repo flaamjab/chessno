@@ -1,6 +1,3 @@
-pub const TOLERANCE_F32: f32 = 1e-4;
-pub const TOLERANCE_F64: f64 = 1e-4;
-
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Point2D {
     pub x: f64,
@@ -23,7 +20,7 @@ pub struct Rectangle {
 
 impl Rectangle {
     pub fn new(top_left: Point2D, bottom_right: Point2D) -> Self {
-        assert!(top_left.x < bottom_right.x && top_left.y < bottom_right.y);
+        assert!(top_left.x <= bottom_right.x && top_left.y <= bottom_right.y);
         Self {
             top_left,
             bottom_right,

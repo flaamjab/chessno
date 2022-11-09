@@ -1,4 +1,3 @@
-use asset_locator::AssetLocator;
 use math::Point2D;
 use winit::{
     event::{DeviceEvent, ElementState, Event, TouchPhase, WindowEvent},
@@ -6,19 +5,17 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::assets::Assets;
-use crate::input_state::InputState;
-use crate::logging::{debug, warn};
-use crate::samples::PlaygroundScene;
-use crate::scene::DynamicScene;
-use crate::timer::Timer;
-use crate::{gfx::renderer::Renderer, input_state::Key};
+use crate::{
+    assets::Assets,
+    input_state::{InputState, Key},
+    logging::{debug, trace, warn},
+    rendering::renderer::Renderer,
+    scenes::{DynamicScene, PlaygroundScene},
+    timer::Timer,
+};
 
-mod asset_locator;
 mod assets;
 mod camera;
-mod frame_counter;
-mod gfx;
 mod input_state;
 mod logging;
 mod math;
@@ -26,9 +23,8 @@ mod obj_loader;
 mod object;
 mod path_wrangler;
 mod platform;
-mod projection;
-mod samples;
-mod scene;
+mod rendering;
+mod scenes;
 mod timer;
 mod transform;
 
@@ -36,11 +32,10 @@ const TITLE: &str = "Chessno";
 
 #[cfg_attr(
     target_os = "android",
-    ndk_glue::main(backtrace = "on", logger(level = "debug"))
+    ndk_glue::main(backtrace = "on", logger(level = "trace"))
 )]
 pub fn main() {
     if !cfg!(target_os = "android") {
-        debug!("Calling logging init");
         logging::init();
     }
 
@@ -50,8 +45,7 @@ pub fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let asset_locator = AssetLocator::new();
-    let mut assets = Assets::new(asset_locator);
+    let mut assets = Assets::new();
     let mut renderer = Renderer::new(TITLE);
 
     let mut timer = Timer::new();
@@ -66,10 +60,9 @@ pub fn main() {
             debug!("Resumed");
             if !renderer.is_initialized() {
                 renderer.initialize_with_window(&window);
-                let textures: Vec<_> = assets.textures().collect();
-                let meshes: Vec<_> = assets.meshes().collect();
-                renderer.use_textures(&textures);
-                renderer.use_meshes(&meshes);
+                renderer.load_assets(&assets);
+            } else {
+                renderer.invalidate_surface(&window);
             }
         }
         Event::Suspended => {
@@ -86,8 +79,8 @@ pub fn main() {
                 debug!("Focused: {value}");
                 focus = value;
             }
-            WindowEvent::Resized(new_size) => {
-                renderer.handle_resize(new_size);
+            WindowEvent::Resized(_) => {
+                renderer.invalidate_surface(&window);
             }
             WindowEvent::Touch(e) => match e.phase {
                 TouchPhase::Started => {
@@ -137,6 +130,7 @@ pub fn main() {
             }
 
             input_state.end_frame();
+
             if !started {
                 started = true;
             }

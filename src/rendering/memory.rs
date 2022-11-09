@@ -5,10 +5,10 @@ use std::ptr;
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 
-use crate::gfx::context::Context;
-use crate::gfx::g;
-use crate::gfx::geometry::Vertex;
-use crate::gfx::physical_device::PhysicalDevice;
+use crate::rendering::context::Context;
+use crate::rendering::g;
+use crate::rendering::physical_device::PhysicalDevice;
+use crate::rendering::vertex::Vertex;
 use crate::transform::Transform;
 
 use super::resource::DeviceResource;

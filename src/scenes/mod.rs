@@ -1,4 +1,8 @@
+mod playground;
+
 use winit::window::Window;
+
+pub use playground::PlaygroundScene;
 
 use crate::assets::Assets;
 use crate::camera::Camera;

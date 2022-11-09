@@ -27,7 +27,7 @@ impl FreeCameraTouchControl {
         joystick_radius_scale: f32,
     ) -> Self {
         let up = Vector3::y_axis();
-        let camera_right = Unit::new_normalize(camera.direction.cross(&up));
+        let camera_right = Self::camera_right(&camera, &up);
         Self {
             camera,
             up,
@@ -36,6 +36,10 @@ impl FreeCameraTouchControl {
             sensitivity,
             joystick_radius_scale,
         }
+    }
+
+    fn camera_right(camera: &Camera, up: &Unit<Vector3<f32>>) -> Unit<Vector3<f32>> {
+        Unit::new_normalize(camera.direction.cross(&up))
     }
 
     fn movement(&self, rect: &Rectangle, touch: &Touch, time_delta: f32) -> Vector3<f32> {
@@ -96,7 +100,6 @@ impl FreeCameraTouchControl {
 
     fn force(&self, rect_normalized_offset_len: f32) -> f32 {
         let force = (rect_normalized_offset_len / self.joystick_radius_scale).clamp(0.0, 1.0);
-        debug!("Force is {force}");
         force
     }
 
@@ -138,6 +141,7 @@ impl CameraControl for FreeCameraTouchControl {
             .map(|t| {
                 let r = self.rotation(&rotate_area, &t, time_delta);
                 self.camera.direction = r * self.camera.direction;
+                self.camera_right = Self::camera_right(&self.camera, &self.up);
             });
     }
 }
