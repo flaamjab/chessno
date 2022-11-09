@@ -1,10 +1,9 @@
 use std::collections::HashSet;
 
 use crate::assets::{Asset, MeshId, TextureId};
-use crate::rendering::memory::{IndexBuffer, VertexBuffer};
 use crate::rendering::vertex::Vertex;
-
-use super::resource::DeviceResource;
+use crate::rendering::vulkan::memory::{IndexBuffer, VertexBuffer};
+use crate::rendering::vulkan::resource::DeviceResource;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {

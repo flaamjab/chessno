@@ -1,6 +1,6 @@
 use erupt::{vk, vk1_0::CommandBufferResetFlags, DeviceLoader};
 
-use crate::rendering::context::Context;
+use crate::rendering::vulkan::context::Context;
 
 use super::swapchain::Swapchain;
 

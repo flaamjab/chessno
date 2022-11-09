@@ -7,8 +7,8 @@ use erupt::{vk, DeviceLoader, InstanceLoader};
 use smallvec::SmallVec;
 
 use crate::logging::debug;
-use crate::rendering::memory;
-use crate::rendering::physical_device::PhysicalDevice;
+use crate::rendering::vulkan::memory;
+use crate::rendering::vulkan::physical_device::PhysicalDevice;
 
 pub struct Swapchain {
     handle: vk::SwapchainKHR,
@@ -86,10 +86,10 @@ impl Swapchain {
             );
 
             if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                device
-                    .queue_wait_idle(self.present_queue)
-                    .expect("failed to wait on queue");
                 if !self.valid {
+                    device
+                        .queue_wait_idle(self.present_queue)
+                        .expect("failed to wait on queue");
                     let image_extent = self.image_extent.clone();
                     self.recreate(&device, &physical_device, self.surface, &image_extent);
                     self.valid = true;
@@ -103,7 +103,12 @@ impl Swapchain {
         }
     }
 
-    pub fn queue_recreate(&mut self, new_surface: vk::SurfaceKHR, new_extent: &vk::Extent2D) {
+    pub fn queue_recreate(
+        &mut self,
+        instance: &InstanceLoader,
+        new_surface: vk::SurfaceKHR,
+        new_extent: &vk::Extent2D,
+    ) {
         self.surface = new_surface;
         self.image_extent = *new_extent;
         self.valid = false;

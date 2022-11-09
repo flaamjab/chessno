@@ -12,15 +12,16 @@ use crate::{
     assets::{Asset, Assets, MeshId, TextureId},
     logging::{debug, trace},
     rendering::{
-        context::Context,
-        descriptor as ds, g,
-        memory::{self, IndexBuffer, VertexBuffer},
         mesh::{LoadedSubmesh, Mesh},
-        resource::DeviceResource,
-        shader::{Shader, ShaderStage},
         spatial::Spatial,
         texture::{self, LoadedTexture, Texture},
         vertex::Vertex,
+        vulkan::context::Context,
+        vulkan::descriptor as ds,
+        vulkan::g,
+        vulkan::memory::{self, IndexBuffer, VertexBuffer},
+        vulkan::resource::DeviceResource,
+        vulkan::shader::{Shader, ShaderStage},
     },
     scenes::Scene,
 };
@@ -334,6 +335,7 @@ impl Renderer {
                     let surface = surface::create_surface(&ctx.instance, &window, None)
                         .expect("failed to create Vulkan surface");
                     swapchain.queue_recreate(
+                        &ctx.instance,
                         surface,
                         &vk::Extent2D {
                             width: width as u32,

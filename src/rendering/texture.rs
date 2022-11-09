@@ -10,11 +10,10 @@ use image::RgbaImage;
 use crate::assets::AssetLocator;
 use crate::{
     assets::{Asset, TextureId},
-    rendering::{context::Context, g, memory},
+    rendering::vulkan::{
+        context::Context, g, memory, physical_device::PhysicalDevice, resource::DeviceResource,
+    },
 };
-
-use super::physical_device::PhysicalDevice;
-use super::resource::DeviceResource;
 
 #[derive(Clone, Debug)]
 pub struct Texture {

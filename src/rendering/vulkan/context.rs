@@ -7,9 +7,9 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::logging::{debug, info};
-use crate::rendering::physical_device::PhysicalDevice;
-use crate::rendering::swapchain::Swapchain;
-use crate::rendering::{memory, validation};
+use crate::rendering::vulkan::physical_device::PhysicalDevice;
+use crate::rendering::vulkan::swapchain::Swapchain;
+use crate::rendering::vulkan::{memory, validation};
 
 use super::sync_pool::SyncPool;
 

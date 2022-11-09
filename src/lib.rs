@@ -79,7 +79,8 @@ pub fn main() {
                 debug!("Focused: {value}");
                 focus = value;
             }
-            WindowEvent::Resized(_) => {
+            WindowEvent::Resized(new_size) => {
+                assert_eq!(new_size, window.inner_size());
                 renderer.invalidate_surface(&window);
             }
             WindowEvent::Touch(e) => match e.phase {
