@@ -77,23 +77,30 @@ impl PlaygroundScene {
         let shrek_texture_id = assets.insert_texture("shrek", shrek_texture);
 
         let default_material_id = assets.id_of(DEFAULT_MATERIAL).unwrap();
+        let default_material = assets.material(default_material_id).unwrap();
+        let shrek_material = Material {
+            id: 0,
+            texture_id: shrek_texture_id,
+            ..*default_material
+        };
+        let shrek_material_id = assets.insert_material("shrek_material", shrek_material);
 
         let unlit_vert_shader = assets.id_of("unlit_vert").unwrap();
         let green_frag_shader_id = Self::green_shader(assets);
+        let fallback_texture_id = assets.id_of(FALLBACK_TEXTURE).unwrap();
         let green_material = Material {
             id: 0,
             vertex_shader_id: unlit_vert_shader,
             fragment_shader_id: green_frag_shader_id,
+            texture_id: fallback_texture_id,
         };
         let green_material_id = assets.insert_material("green_material", green_material);
 
-        let shrek_chess_cell = Mesh::new_plane(shrek_texture_id, default_material_id);
+        let shrek_chess_cell = Mesh::new_plane(shrek_texture_id, shrek_material_id);
         let cell_w = shrek_chess_cell.bbox.width;
         let cell_l = shrek_chess_cell.bbox.length;
 
         let shrek_chess_cell_id = assets.insert_mesh("shrek_chess_cell", shrek_chess_cell);
-
-        let fallback_texture_id = assets.id_of(FALLBACK_TEXTURE).unwrap();
 
         let green_chess_cell = Mesh::new_plane(fallback_texture_id, green_material_id);
         let green_chess_cell_id = assets.insert_mesh("green_chess_cell", green_chess_cell);

@@ -2,13 +2,13 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use log::{debug, trace, warn};
+use log::{trace, warn};
 use obj::{Group, Obj, ObjData, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
 use crate::assets::MaterialId;
 use crate::{
-    assets::{Asset, Assets, MeshId, TextureId, FALLBACK_TEXTURE},
+    assets::{Assets, MeshId, TextureId, FALLBACK_TEXTURE},
     path_wrangler::PathWrangler,
     rendering::{
         mesh::{BBox, Mesh, Submesh},
@@ -104,7 +104,6 @@ impl<'a> ObjLoader<'a> {
                     start_index: submesh_start,
                     end_index: submesh_end,
                     material_id,
-                    texture_id,
                 });
             }
         }

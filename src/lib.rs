@@ -8,7 +8,7 @@ use winit::{
 use crate::{
     assets::Assets,
     input_state::{InputState, Key},
-    logging::{debug, trace, warn},
+    logging::{debug, warn},
     rendering::renderer::Renderer,
     scenes::{DynamicScene, PlaygroundScene},
     timer::Timer,

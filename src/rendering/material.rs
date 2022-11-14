@@ -4,6 +4,7 @@ pub struct Material {
     pub id: MaterialId,
     pub vertex_shader_id: ShaderId,
     pub fragment_shader_id: ShaderId,
+    pub texture_id: TextureId,
 }
 
 impl Asset for Material {

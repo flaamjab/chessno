@@ -2,10 +2,10 @@ use std::ffi::CString;
 use std::io::{self, Read};
 use std::path::Path;
 
-use erupt::{vk, DeviceLoader};
-use spirv_compiler::{CompilerBuilder, CompilerError, ShaderKind};
+use erupt::{utils::decode_spv, vk, DeviceLoader};
 
 use crate::assets::{Asset, AssetLocator, ShaderId};
+use crate::logging::debug;
 use crate::rendering::vulkan::resource::DeviceResource;
 
 #[derive(Clone, Copy)]
@@ -25,7 +25,7 @@ impl Into<vk::ShaderStageFlagBits> for ShaderStage {
 
 pub struct Shader {
     pub id: ShaderId,
-    raw_code: String,
+    raw_code: Vec<u8>,
     stage: ShaderStage,
 }
 
@@ -35,9 +35,14 @@ impl Shader {
         path: &Path,
         stage: ShaderStage,
     ) -> io::Result<Self> {
+        let mut extension = path.extension().unwrap().to_os_string();
+        extension.push(".spv");
+        let path = path.with_extension(extension);
+
         let mut reader = asset_locator.open(&path)?;
-        let mut code = String::with_capacity(1024);
-        reader.read_to_string(&mut code)?;
+        let mut code = Vec::with_capacity(1024);
+        reader.read_to_end(&mut code)?;
+        debug!("Code length is {}", code.len());
 
         Ok(Self {
             id: 0,
@@ -46,10 +51,7 @@ impl Shader {
         })
     }
 
-    pub unsafe fn initialize(
-        &self,
-        device: &DeviceLoader,
-    ) -> Result<InitializedShader, CompilerError> {
+    pub unsafe fn initialize(&self, device: &DeviceLoader) -> io::Result<InitializedShader> {
         let compiled_code = self.compile()?;
         let module_info = vk::ShaderModuleCreateInfoBuilder::new().code(&compiled_code);
         let module = device
@@ -63,13 +65,8 @@ impl Shader {
         })
     }
 
-    fn compile(&self) -> Result<Vec<u32>, CompilerError> {
-        let mut compiler = CompilerBuilder::new().build().unwrap();
-        let kind = match self.stage {
-            ShaderStage::Fragment => ShaderKind::Fragment,
-            ShaderStage::Vertex => ShaderKind::Vertex,
-        };
-        compiler.compile_from_string(&self.raw_code, kind)
+    fn compile(&self) -> io::Result<Vec<u32>> {
+        decode_spv(&self.raw_code)
     }
 }
 
@@ -132,6 +129,6 @@ mod test {
         if let Err(e) = &compilation_result {
             eprintln!("{e}");
         }
-        assert!(matches!(compilation_result, Err(CompilerError::Log(_))));
+        assert!(matches!(compilation_result, Err(_)));
     }
 }

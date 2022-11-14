@@ -21,14 +21,12 @@ pub struct Submesh {
     pub start_index: usize,
     pub end_index: usize,
     pub material_id: MaterialId,
-    pub texture_id: TextureId,
 }
 
 /// Submesh loaded to the GPU (current implementation uses one index and vertex buffer per submesh).
 #[derive(Debug)]
 pub struct LoadedSubmesh {
     pub id: MeshId,
-    pub texture_id: TextureId,
     pub material_id: MaterialId,
     pub vertex_buf: VertexBuffer,
     pub index_buf: IndexBuffer,
@@ -99,7 +97,6 @@ impl Mesh {
                 id: 0,
                 start_index: 0,
                 end_index: n_indices,
-                texture_id,
                 material_id,
             }],
         }

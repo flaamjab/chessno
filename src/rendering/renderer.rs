@@ -165,7 +165,9 @@ impl Renderer {
                             &mvp as *const Spatial as *const c_void,
                         );
 
-                        let texture_descriptor_set = self.texture_descriptor_sets[&sm.texture_id];
+                        let material = assets.material(sm.material_id).unwrap();
+                        let texture_descriptor_set =
+                            self.texture_descriptor_sets[&material.texture_id];
                         device.cmd_bind_descriptor_sets(
                             cmd_buf,
                             vk::PipelineBindPoint::GRAPHICS,
@@ -342,7 +344,6 @@ impl Renderer {
                     let gpu_mesh = LoadedSubmesh {
                         id: submesh.id,
                         material_id: submesh.material_id,
-                        texture_id: submesh.texture_id,
                         index_buf,
                         vertex_buf,
                     };

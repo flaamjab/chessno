@@ -65,6 +65,7 @@ impl Assets {
             id: new_uuid(),
             fragment_shader_id: unlit_frag_shader.id,
             vertex_shader_id: unlit_vert_shader.id,
+            texture_id: fallback_texture.id,
         };
 
         let name_map = HashMap::from_iter([
