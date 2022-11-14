@@ -3,7 +3,7 @@ use std::{
     ops::Deref,
 };
 
-use erupt::{vk, DeviceLoader, InstanceLoader};
+use erupt::{utils::VulkanResult, vk, DeviceLoader, InstanceLoader};
 use smallvec::SmallVec;
 
 use crate::logging::debug;
@@ -19,7 +19,6 @@ pub struct Swapchain {
     image_extent: vk::Extent2D,
     image_count: u32,
     framebuffers: RefCell<Option<SmallVec<[vk::Framebuffer; 8]>>>,
-    valid: bool,
 }
 
 impl Swapchain {
@@ -28,10 +27,10 @@ impl Swapchain {
         physical_device: &PhysicalDevice,
         present_queue: vk::Queue,
         surface: vk::SurfaceKHR,
-        draw_area_size: &vk::Extent2D,
+        surface_size: &vk::Extent2D,
     ) -> Self {
         let image_count = select_image_count(&physical_device);
-        let image_extent = compute_extent(&physical_device, &draw_area_size);
+        let image_extent = compute_extent(&physical_device, &surface_size);
 
         unsafe {
             let swapchain = create_swapchain(
@@ -61,7 +60,6 @@ impl Swapchain {
                 image_count,
                 image_extent,
                 framebuffers: RefCell::new(None),
-                valid: true,
             }
         }
     }
@@ -69,7 +67,6 @@ impl Swapchain {
     pub fn acquire_image(
         &mut self,
         device: &DeviceLoader,
-        physical_device: &PhysicalDevice,
         in_flight_fence: vk::Fence,
         image_available_semaphore: vk::Semaphore,
     ) -> Option<u32> {
@@ -78,52 +75,44 @@ impl Swapchain {
                 .wait_for_fences(&[in_flight_fence], true, u64::MAX)
                 .unwrap();
 
-            let maybe_image = device.acquire_next_image_khr(
+            match device.acquire_next_image_khr(
                 self.handle,
                 u64::MAX,
                 image_available_semaphore,
                 vk::Fence::null(),
-            );
-
-            if maybe_image.raw == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                if !self.valid {
-                    device
-                        .queue_wait_idle(self.present_queue)
-                        .expect("failed to wait on queue");
-                    let image_extent = self.image_extent.clone();
-                    self.recreate(&device, &physical_device, self.surface, &image_extent);
-                    self.valid = true;
+            ) {
+                VulkanResult {
+                    raw: vk::Result::SUCCESS,
+                    value: Some(image),
+                } => Some(image),
+                VulkanResult {
+                    raw: vk::Result::ERROR_OUT_OF_DATE_KHR,
+                    ..
+                } => None,
+                _ => {
+                    panic!("failed to acquire image from swapchain, aborting...");
                 }
-                return None;
-            } else if maybe_image.raw != vk::Result::SUCCESS {
-                panic!("failed to acquire image from swapchain, aborting...");
             }
-
-            maybe_image.value
         }
     }
 
-    pub fn queue_recreate(
+    pub unsafe fn recreate(
         &mut self,
         instance: &InstanceLoader,
-        new_surface: vk::SurfaceKHR,
-        new_extent: &vk::Extent2D,
-    ) {
-        self.surface = new_surface;
-        self.image_extent = *new_extent;
-        self.valid = false;
-    }
-
-    unsafe fn recreate(
-        &mut self,
         device: &DeviceLoader,
         physical_device: &PhysicalDevice,
-        surface: vk::SurfaceKHR,
-        draw_area_size: &vk::Extent2D,
+        surface: Option<vk::SurfaceKHR>,
+        surface_size: &vk::Extent2D,
     ) {
         self.release_dependents(device);
 
-        let new_image_extent = compute_extent(physical_device, draw_area_size);
+        let surface = if let Some(surface) = surface {
+            surface
+        } else {
+            self.surface
+        };
+
+        let new_image_extent = compute_extent(physical_device, surface_size);
         let new_swapchain = create_swapchain(
             device,
             physical_device,
@@ -141,6 +130,11 @@ impl Swapchain {
 
         debug!("Destroying old swapchain");
         device.destroy_swapchain_khr(self.handle, None);
+
+        if self.surface != surface {
+            instance.destroy_surface_khr(self.surface, None);
+            self.surface = surface;
+        }
 
         self.image_extent = new_image_extent;
         self.image_views =
@@ -186,6 +180,9 @@ impl Swapchain {
         self.release_dependents(device);
         device.destroy_swapchain_khr(self.handle, None);
         instance.destroy_surface_khr(self.surface, None);
+
+        self.handle = vk::SwapchainKHR::null();
+        self.surface = vk::SurfaceKHR::null();
     }
 
     unsafe fn release_dependents(&mut self, device: &DeviceLoader) {

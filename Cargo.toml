@@ -8,6 +8,7 @@ winit = "0.27"
 env_logger = "0.9"
 log = "0.4"
 nalgebra = "0.31.2"
+# glam = "0.22.0"
 bytemuck = { version = "1.4", features = ["derive"] }
 rand = "0.8.5"
 image = { version =  "0.24", features = ["jpeg"] }
@@ -17,6 +18,7 @@ smallvec = "1.10"
 memoffset = "0.6.5"
 obj = "0.10.2"
 uuid = { version = "1.2.1", features = ["v4" ]}
+spirv-compiler = "0.2.0"
 
 [lib]
 crate-type = ["lib", "cdylib"]
@@ -32,6 +34,9 @@ assets = "assets"
 
 [package.metadata.android.application]
 label = "Chessno"
+
+[package.metadata.android.application.activity]
+# orientation = "landscape"
 
 [package.metadata.android.sdk]
 min_sdk_version = 23

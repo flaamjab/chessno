@@ -70,7 +70,7 @@ pub unsafe fn begin_draw(
     cmd_buf: vk::CommandBuffer,
     render_pass: vk::RenderPass,
     framebuffer: vk::Framebuffer,
-    draw_area_size: &vk::Extent2D,
+    draw_extent: &vk::Extent2D,
 ) {
     device
         .reset_command_buffer(cmd_buf, CommandBufferResetFlags::empty())
@@ -84,7 +84,7 @@ pub unsafe fn begin_draw(
     let clear_values = [
         vk::ClearValue {
             color: vk::ClearColorValue {
-                float32: [0.1, 0.0, 0.0, 1.0],
+                float32: [0.0, 0.0, 0.0, 1.0],
             },
         },
         vk::ClearValue {
@@ -100,7 +100,7 @@ pub unsafe fn begin_draw(
         .framebuffer(framebuffer)
         .render_area(vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: *draw_area_size,
+            extent: *draw_extent,
         })
         .clear_values(&clear_values);
 
@@ -113,14 +113,14 @@ pub unsafe fn begin_draw(
     let viewport = vk::ViewportBuilder::new()
         .x(0.0)
         .y(0.0)
-        .width(draw_area_size.width as f32)
-        .height(draw_area_size.height as f32)
+        .width(draw_extent.width as f32)
+        .height(draw_extent.height as f32)
         .min_depth(0.0)
         .max_depth(1.0);
     device.cmd_set_viewport(cmd_buf, 0, &[viewport]);
 
     let scissor = vk::Rect2D {
-        extent: *draw_area_size,
+        extent: *draw_extent,
         offset: vk::Offset2D { x: 0, y: 0 },
     }
     .into_builder();

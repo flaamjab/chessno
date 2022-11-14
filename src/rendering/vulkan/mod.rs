@@ -4,7 +4,6 @@ pub mod g;
 pub mod memory;
 pub mod physical_device;
 pub mod resource;
-pub mod shader;
 pub mod swapchain;
 pub mod sync_pool;
 pub mod validation;

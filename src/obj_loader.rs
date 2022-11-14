@@ -6,6 +6,7 @@ use log::{debug, trace, warn};
 use obj::{Group, Obj, ObjData, ObjMaterial, SimplePolygon};
 use smallvec::{smallvec, SmallVec};
 
+use crate::assets::MaterialId;
 use crate::{
     assets::{Asset, Assets, MeshId, TextureId, FALLBACK_TEXTURE},
     path_wrangler::PathWrangler,
@@ -35,7 +36,7 @@ impl<'a> ObjLoader<'a> {
         }
     }
 
-    pub fn load(&mut self, path: &Path, name: &str) -> MeshId {
+    pub fn load(&mut self, path: &Path, name: &str, material_id: MaterialId) -> MeshId {
         let locator = self.assets.asset_locator();
         let reader = locator.open(path).expect("make sure requested file exists");
         let obj_data = ObjData::load_buf(reader).expect("make sure the file format is correct OBJ");
@@ -54,7 +55,7 @@ impl<'a> ObjLoader<'a> {
         })
         .expect("make sure material files exist");
 
-        let submeshes = self.assemble(&obj);
+        let submeshes = self.assemble(&obj, material_id);
 
         let vertices = std::mem::replace(&mut self.vertices, Vec::new());
         let indices = std::mem::replace(&mut self.indices, Vec::new());
@@ -71,7 +72,7 @@ impl<'a> ObjLoader<'a> {
         self.assets.insert_mesh(name, mesh)
     }
 
-    fn assemble(&mut self, obj: &Obj) -> Vec<Submesh> {
+    fn assemble(&mut self, obj: &Obj, material_id: MaterialId) -> Vec<Submesh> {
         let mut submesh_start;
         let mut submesh_end = 0;
         let mut submeshes = Vec::with_capacity(1);
@@ -100,9 +101,10 @@ impl<'a> ObjLoader<'a> {
 
                 submeshes.push(Submesh {
                     id: 0,
-                    texture_id,
                     start_index: submesh_start,
                     end_index: submesh_end,
+                    material_id,
+                    texture_id,
                 });
             }
         }
@@ -192,13 +194,16 @@ impl<'a> ObjLoader<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::assets::DEFAULT_MATERIAL;
+
     use super::*;
 
     #[test]
     fn test_model_loads_successfully() {
         let path = Path::new("models/indoor_plant/indoor plant_02.obj");
         let mut assets = Assets::new();
+        let default_material_id = assets.id_of(DEFAULT_MATERIAL).unwrap();
         let mut loader = ObjLoader::new(&mut assets);
-        let _mesh = loader.load(path, "plant");
+        let _mesh = loader.load(path, "plant", default_material_id);
     }
 }

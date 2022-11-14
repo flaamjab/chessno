@@ -44,9 +44,8 @@ unsafe fn setup_debug_messenger(instance: &Arc<InstanceLoader>) -> vk::DebugUtil
         )
         .message_type(
             // vk::DebugUtilsMessageTypeFlagsEXT::GENERAL_EXT |
-            vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT | {
-                vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT
-            },
+            vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION_EXT
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE_EXT,
         )
         .pfn_user_callback(Some(debug_callback));
 

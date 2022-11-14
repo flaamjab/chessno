@@ -6,6 +6,7 @@ use std::{io::Read, path::Path};
 use ndk::asset::{Asset, AssetManager};
 
 const ASSET_BASE_PATH: &str = "./assets";
+const SHADERS_BASE_PATH: &str = "./shaders";
 
 pub struct AssetLocator {}
 

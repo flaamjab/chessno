@@ -4,13 +4,17 @@ use nalgebra::{Point3, Vector4};
 use winit::window::Window;
 
 use crate::{
-    assets::{Asset, Assets},
+    assets::{Assets, ShaderId, DEFAULT_MATERIAL, FALLBACK_TEXTURE},
     camera::{Camera, CameraControl, FreeCameraMouseControl, FreeCameraTouchControl},
     input_state::InputState,
-    obj_loader::ObjLoader,
     object::Object,
-    rendering::projection::Projection,
-    rendering::{mesh::Mesh, texture::Texture},
+    rendering::{
+        material::Material,
+        mesh::Mesh,
+        shader::{Shader, ShaderStage},
+        texture::Texture,
+    },
+    rendering::{projection::Projection, PrimitiveType},
     scenes::{DynamicScene, Scene},
     transform::Transform,
 };
@@ -28,6 +32,18 @@ impl PlaygroundScene {
             objects,
             camera_control,
         }
+    }
+
+    fn green_shader(assets: &mut Assets) -> ShaderId {
+        let locator = assets.asset_locator();
+        let green_frag = Shader::from_asset(
+            &locator,
+            Path::new("shaders/green.frag"),
+            ShaderStage::Fragment,
+        )
+        .unwrap();
+
+        assets.insert_shader("green_frag", green_frag)
     }
 
     fn setup_objects(assets: &mut Assets) -> Vec<Object> {
@@ -60,18 +76,41 @@ impl PlaygroundScene {
         let shrek_texture = Texture::from_asset(locator, Path::new("textures/shrek.jpg")).unwrap();
         let shrek_texture_id = assets.insert_texture("shrek", shrek_texture);
 
-        let chess_cell = Mesh::new_plane(shrek_texture_id);
-        let chess_cell_id = assets.insert_mesh("chess_cell", chess_cell);
+        let default_material_id = assets.id_of(DEFAULT_MATERIAL).unwrap();
 
-        let cell = assets.mesh(chess_cell_id).unwrap();
-        let cell_w = cell.bbox.width;
-        let cell_l = cell.bbox.length;
+        let unlit_vert_shader = assets.id_of("unlit_vert").unwrap();
+        let green_frag_shader_id = Self::green_shader(assets);
+        let green_material = Material {
+            id: 0,
+            vertex_shader_id: unlit_vert_shader,
+            fragment_shader_id: green_frag_shader_id,
+        };
+        let green_material_id = assets.insert_material("green_material", green_material);
+
+        let shrek_chess_cell = Mesh::new_plane(shrek_texture_id, default_material_id);
+        let cell_w = shrek_chess_cell.bbox.width;
+        let cell_l = shrek_chess_cell.bbox.length;
+
+        let shrek_chess_cell_id = assets.insert_mesh("shrek_chess_cell", shrek_chess_cell);
+
+        let fallback_texture_id = assets.id_of(FALLBACK_TEXTURE).unwrap();
+
+        let green_chess_cell = Mesh::new_plane(fallback_texture_id, green_material_id);
+        let green_chess_cell_id = assets.insert_mesh("green_chess_cell", green_chess_cell);
 
         let mut objects = Vec::with_capacity(16);
         for row in 0..8 {
             for col in 0..8 {
+                let mesh_id;
+                if (col + row) % 2 == 0 {
+                    mesh_id = shrek_chess_cell_id;
+                } else {
+                    mesh_id = green_chess_cell_id;
+                }
+
                 let o = Object {
-                    mesh_id: cell.id(),
+                    mesh_id,
+                    primitive_type: PrimitiveType::Lines,
                     transform: Transform::new(
                         Point3::new(cell_w * row as f32, 0.0, cell_l * col as f32),
                         Vector4::new(1.0, 0.0, 0.0, 90.0),

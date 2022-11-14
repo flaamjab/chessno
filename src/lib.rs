@@ -46,27 +46,38 @@ pub fn main() {
         .unwrap();
 
     let mut assets = Assets::new();
-    let mut renderer = Renderer::new(TITLE);
+    let mut renderer: Option<Renderer> = None;
 
     let mut timer = Timer::new();
     let mut input_state = InputState::new();
 
     let mut scene = PlaygroundScene::new(&mut assets);
-    let mut focus = false;
-    let mut started = false;
+    let mut active = false;
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::Resumed => {
             debug!("Resumed");
-            if !renderer.is_initialized() {
-                renderer.initialize_with_window(&window);
-                renderer.load_assets(&assets);
-            } else {
-                renderer.invalidate_surface(&window);
+            active = true;
+            timer.reset();
+            match &mut renderer {
+                Some(renderer) => {
+                    debug!("Invalidating surface after resume");
+                    renderer.invalidate_surface(&window);
+                    renderer.resume();
+                }
+                None => {
+                    let mut new_renderer = Renderer::new(TITLE, &window);
+                    new_renderer.load_assets(&assets);
+                    renderer = Some(new_renderer);
+                }
             }
         }
         Event::Suspended => {
-            debug!("Suspended")
+            active = false;
+            if let Some(renderer) = &mut renderer {
+                renderer.pause();
+            }
+            debug!("Suspended");
         }
         Event::DeviceEvent { event, .. } => match event {
             DeviceEvent::MouseMotion { delta } => {
@@ -77,11 +88,14 @@ pub fn main() {
         Event::WindowEvent { event, .. } => match event {
             WindowEvent::Focused(value) => {
                 debug!("Focused: {value}");
-                focus = value;
             }
             WindowEvent::Resized(new_size) => {
+                debug!("Window resized");
                 assert_eq!(new_size, window.inner_size());
-                renderer.invalidate_surface(&window);
+                if let Some(renderer) = &mut renderer {
+                    debug!("Invalidating surface");
+                    renderer.invalidate_surface_size(new_size);
+                }
             }
             WindowEvent::Touch(e) => match e.phase {
                 TouchPhase::Started => {
@@ -121,19 +135,17 @@ pub fn main() {
             _ => {}
         },
         Event::MainEventsCleared => {
-            let delta = timer.elapsed();
-            timer.reset();
+            if active {
+                let delta = timer.elapsed();
+                timer.reset();
 
-            scene.update(&window, &input_state, delta, &mut assets);
+                scene.update(&window, &input_state, delta, &mut assets);
 
-            if renderer.is_initialized() && (focus || !started) {
-                renderer.draw(&mut scene, &mut assets);
-            }
+                if let Some(renderer) = &mut renderer {
+                    renderer.draw(&mut scene, &mut assets);
+                }
 
-            input_state.end_frame();
-
-            if !started {
-                started = true;
+                input_state.end_frame();
             }
         }
         _ => {}

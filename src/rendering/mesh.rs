@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::assets::{Asset, MeshId, TextureId};
+use crate::assets::{Asset, MaterialId, MeshId, TextureId};
 use crate::rendering::vertex::Vertex;
 use crate::rendering::vulkan::memory::{IndexBuffer, VertexBuffer};
 use crate::rendering::vulkan::resource::DeviceResource;
@@ -18,9 +18,10 @@ pub struct Mesh {
 #[derive(Clone, Debug)]
 pub struct Submesh {
     pub id: MeshId,
-    pub texture_id: TextureId,
     pub start_index: usize,
     pub end_index: usize,
+    pub material_id: MaterialId,
+    pub texture_id: TextureId,
 }
 
 /// Submesh loaded to the GPU (current implementation uses one index and vertex buffer per submesh).
@@ -28,6 +29,7 @@ pub struct Submesh {
 pub struct LoadedSubmesh {
     pub id: MeshId,
     pub texture_id: TextureId,
+    pub material_id: MaterialId,
     pub vertex_buf: VertexBuffer,
     pub index_buf: IndexBuffer,
 }
@@ -53,7 +55,7 @@ impl Asset for Mesh {
 }
 
 impl Mesh {
-    pub fn new_plane(texture_id: TextureId) -> Mesh {
+    pub fn new_plane(texture_id: TextureId, material_id: MaterialId) -> Mesh {
         let vertices = [
             Vertex {
                 pos: [-0.5, -0.5, 0.0],
@@ -98,6 +100,7 @@ impl Mesh {
                 start_index: 0,
                 end_index: n_indices,
                 texture_id,
+                material_id,
             }],
         }
     }

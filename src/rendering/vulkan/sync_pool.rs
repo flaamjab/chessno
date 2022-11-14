@@ -3,8 +3,6 @@ use std::sync::Arc;
 use erupt::{vk, DeviceLoader};
 use smallvec::SmallVec;
 
-use crate::logging::debug;
-
 const MAX_EXPECTED_SYNC_PRIMITIVES: usize = 8;
 
 pub struct SyncPool {

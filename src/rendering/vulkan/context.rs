@@ -80,7 +80,7 @@ impl Context {
                 &draw_area_size,
             );
 
-            let mut sync_pool = SyncPool::new();
+            let sync_pool = SyncPool::new();
             let cmd_pool =
                 memory::create_command_pool(&device, physical_device.graphics_queue_family);
 
