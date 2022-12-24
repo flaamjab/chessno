@@ -1,3 +1,3 @@
 fn main() {
-    chessno::main();
+    println!("Hello, world!");
 }
