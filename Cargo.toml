@@ -1,6 +1,6 @@
 [package]
 name = "chessno"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -10,18 +10,22 @@ log = "0.4"
 glam = "0.22.0"
 bytemuck = { version = "1.4", features = ["derive"] }
 rand = "0.8.5"
-image = { version =  "0.24", features = ["jpeg"] }
-ash = "0.37"
+image = { version = "0.24", features = ["jpeg"] }
+ash = { version =  "0.35", features = ["linked"] }
 smallvec = "1.10"
 memoffset = "0.6.5"
 tobj = "3.2"
-uuid = { version = "1.2.1", features = ["v4" ]}
+uuid = { version = "1.2.1", features = ["v4"] }
 
 [lib]
 crate-type = ["lib", "cdylib"]
 
+[[bin]]
+name = "chessno-play"
+path = "src/main.rs"
+
 [target.'cfg(target_os = "android")'.dependencies]
-ndk-glue = {  version = "0.7.0", features = ["logger"] }
+ndk-glue = { version = "0.7.0", features = ["logger"] }
 ndk-context = "0.1.1"
 ndk = "0.7.0"
 jni = "0.20.0"

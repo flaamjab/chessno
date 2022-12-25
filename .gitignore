@@ -3,3 +3,8 @@ assets/models
 assets/materials
 assets/textures
 assets/shaders
+
+*.dll
+*.obj
+*.exp
+*.lib
