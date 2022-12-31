@@ -10,15 +10,16 @@ use ash::{
     vk::{self, ExtExtension390Fn, Handle},
     Device, Instance,
 };
+use vma::Allocator;
 
+use chessno::logging::debug;
 use chessno::vma;
-use chessno::{logging::debug, vma::VmaAllocatorHandle};
 
 pub struct Context {
     instance: Instance,
     physical_device: vk::PhysicalDevice,
     device: Device,
-    allocator: VmaAllocatorHandle,
+    allocator: Allocator,
     swapchain: vk::SwapchainKHR,
 
     debug: Option<Debug>,
@@ -142,18 +143,8 @@ impl Context {
                 .unwrap();
             debug!("Created Vulkan device");
 
-            let allocator: vma::VmaAllocatorHandle = std::ptr::null_mut();
-            let r = vma::create_allocator(
-                instance.handle().as_raw(),
-                physical_device.as_raw(),
-                device.handle().as_raw(),
-                std::ptr::addr_of!(allocator),
-            );
+            let mut allocator = Allocator::new(&instance, &physical_device, &device).unwrap();
             debug!("VMA allocator created");
-
-            if r != vk::Result::SUCCESS {
-                panic!("Failed to create VMA allocator");
-            }
 
             let buffer_info = vk::BufferCreateInfo::builder()
                 .usage(vk::BufferUsageFlags::UNIFORM_BUFFER)
@@ -162,23 +153,14 @@ impl Context {
             let buffer = device.create_buffer(&buffer_info, None).unwrap();
 
             debug!("Allocating memory");
-            let memory: vma::VmaMemoryHandle = std::ptr::null_mut();
-            let result = vma::allocate_memory_for_buffer(
-                allocator,
-                buffer.as_raw(),
-                true,
-                std::ptr::addr_of!(memory),
-            );
+
+            let memory = allocator.allocate_for_buffer(buffer, true).unwrap();
             debug!("Memory allocated");
 
-            if result != vk::Result::SUCCESS {
-                panic!("Failed to allocate memory for buffer");
-            }
-
-            vma::set_memory_data(allocator, memory, b"data".as_ptr() as *const c_void, 4);
+            allocator.set_memory_data(&memory, b"data");
 
             debug!("Freeing memory");
-            vma::free_memory(allocator, memory);
+            allocator.free_memory(memory);
             debug!("Memory freed");
 
             debug!("Destroying buffer");
@@ -210,7 +192,7 @@ impl Context {
 impl Drop for Context {
     fn drop(&mut self) {
         unsafe {
-            vma::destroy_allocator(self.allocator);
+            self.allocator.destroy();
             debug!("VMA allocator destroyed");
 
             self.device.destroy_device(None);
